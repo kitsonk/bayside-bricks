@@ -16,7 +16,7 @@ export default function Home() {
             <img
               class="mr-4"
               src="https://www.bricklink.com/myImg/1035787.JPG"
-            />Complete, used sets; many with original packaging;
+            />Complete, used sets, many with original packaging;
           </li>
           <li class="flex items-center">
             <img
