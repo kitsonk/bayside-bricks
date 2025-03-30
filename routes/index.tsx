@@ -8,31 +8,31 @@ export default function Home() {
       />
       <main class="absolute text-left top-4 left-4">
         <h1 class="text-5xl font-bold my-4">Welcome to Bayside Brickstore</h1>
-        <h2 class="text-4xl my-3">
-          Victoria's new kid on the block, selling a wide selection of
+        <h2 class="text-3xl my-3">
+          Victoria's new kid on the block, selling a wide selection of...
         </h2>
         <ul class="ml-8 space-y-2">
           <li class="flex items-center">
             <img
               class="mr-4"
               src="https://www.bricklink.com/myImg/1035787.JPG"
-            />Complete, used sets; many with original packaging
+            />Complete, used sets; many with original packaging;
           </li>
           <li class="flex items-center">
             <img
               class="mr-4"
               src="https://www.bricklink.com/myImg/1035788.JPG"
-            />New and used minifigures
+            />New and used minifigures;
           </li>
           <li class="flex items-center">
             <img
               class="mr-4"
               src="https://www.bricklink.com/myImg/1035789.JPG"
-            />Rare bricks and other parts, with new items added daily
+            />Rare bricks and other parts, with new items added daily.
           </li>
         </ul>
-        <h2 class="text-4xl my-3">
-          Quality, Honesty, Attention to detail
+        <h2 class="text-3xl my-3">
+          Quality, honesty, attention to detail:
         </h2>
         <ul class="ml-8 space-y-2">
           <li class="flex items-center">
