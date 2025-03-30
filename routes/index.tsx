@@ -8,7 +8,7 @@ export default function Home() {
       />
       <main class="absolute text-left top-4 left-4">
         <h1 class="text-5xl font-bold my-4">Welcome to Bayside Brickstore</h1>
-        <h2 class="text-3xl my-3">
+        <h2 class="text-3xl my-3 space-y-1">
           Victoria's new kid on the block, selling a wide selection of...
         </h2>
         <ul class="ml-8 space-y-2">
