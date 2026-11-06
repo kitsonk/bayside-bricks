@@ -1,38 +1,32 @@
 ---
+// Port of routes/_app.tsx (legacy Fresh layout shell). Head is verbatim parity:
+// charset, viewport, title, /styles.css, and the Bricklink iframeResizer
+// contentWindow script (MIGRATION_INVENTORY.md §9.3 — the page is embedded in
+// the Bricklink store via iframe; keep this script and never add
+// X-Frame-Options / frame-ancestors).
+import stylesUrl from "../styles/global.css?url";
+
 interface Props {
   title: string;
-  description?: string;
 }
 
-const { title, description = "Bayside Bricks" } = Astro.props;
+const { title } = Astro.props;
 ---
 
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content={description} />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{title}</title>
+    <link rel="stylesheet" href={stylesUrl} />
+    <!-- Vendored locally for availability (original:
+         //cache.bricklink.info/vendor/iframeResizer.contentWindow.3.5.3.min.js).
+         Classic script, deliberately NOT type=module: iframe-resizer
+         contentWindow must run un-deferred, as on the legacy site. -->
+    <script is:inline src="/vendor/iframeResizer.contentWindow.3.5.3.min.js"></script>
   </head>
   <body>
     <slot />
   </body>
 </html>
-
-<style is:global>
-  body {
-    margin: 0;
-    font-family: system-ui, sans-serif;
-    line-height: 1.5;
-    color: #1a1a1a;
-    background: #fff;
-  }
-
-  main {
-    max-width: 42rem;
-    margin: 0 auto;
-    padding: 2rem 1.25rem;
-  }
-</style>
