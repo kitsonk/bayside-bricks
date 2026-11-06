@@ -1,6 +1,10 @@
 # Local environment for `astro dev` and `wrangler dev`.
 # Copy to .dev.vars (gitignored) and fill in values.
-# In production, secrets are set with:
+#
+# ENVIRONMENT MATRIX (verified 2026-11-07 against the full legacy app tree,
+# MIGRATION_INVENTORY.md §7): this application requires NO secrets and one
+# plain, non-secret variable. Do not put secrets in this committed example.
+#
+# In production, secrets (none required today) would be set with:
 #   npx wrangler secret put <NAME> -c dist/server/wrangler.json
 APP_ENV=development
-# EXAMPLE_SECRET=replace-me
