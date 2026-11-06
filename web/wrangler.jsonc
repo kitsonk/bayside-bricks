@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Base Workers configuration. The @astrojs/cloudflare adapter reads this at
+  // build time and emits a resolved config at dist/server/wrangler.json —
+  // `wrangler dev` / `wrangler deploy` run against THAT (see package.json
+  // scripts). Keep secrets out of this file.
+  "name": "bayside-bricks",
+  // Pinned; must not exceed the bundled workerd's supported date — bump it
+  // deliberately when the wrangler/workerd toolchain advances.
+  "compatibility_date": "2026-11-03",
+  // nodejs_compat makes the Worker env bindings readable via process.env,
+  // which is how src/lib/env.ts resolves runtime configuration.
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  // Non-secret configuration goes here and is readable via env("NAME") at
+  // runtime (or import.meta.env.NAME at build time):
+  // "vars": {
+  //   "APP_ENV": "production"
+  // }
+}

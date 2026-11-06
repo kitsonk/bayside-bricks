@@ -1,0 +1,6 @@
+# Local environment for `astro dev` and `wrangler dev`.
+# Copy to .dev.vars (gitignored) and fill in values.
+# In production, secrets are set with:
+#   npx wrangler secret put <NAME> -c dist/server/wrangler.json
+APP_ENV=development
+# EXAMPLE_SECRET=replace-me

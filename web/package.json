@@ -1,0 +1,26 @@
+{
+  "name": "bayside-bricks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bayside Bricks — Astro on Cloudflare Workers (migration target for the Deno Fresh app at the repo root)",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "npm@12.0.2",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "wrangler dev -c dist/server/wrangler.json",
+    "deploy": "astro build && wrangler deploy -c dist/server/wrangler.json"
+  },
+  "dependencies": {
+    "@astrojs/cloudflare": "^14.4.4",
+    "astro": "^7.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.0",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.156.2"
+  }
+}
