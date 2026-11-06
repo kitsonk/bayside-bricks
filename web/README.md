@@ -112,10 +112,10 @@ web/
 └── src/
     ├── env.d.ts           # App.Locals typing from @astrojs/cloudflare
     ├── lib/env.ts         # Cross-runtime env resolution helper
-    ├── layouts/Base.astro # Base HTML layout
+    ├── layouts/Base.astro # Base HTML layout (legacy _app.tsx head, verbatim)
     └── pages/
-        ├── index.astro    # Placeholder home page
-        ├── 404.astro      # Not-found page (status 404)
+        ├── index.astro    # Bayside Brickstore home page (port of routes/index.tsx)
+        ├── 404.astro      # Not-found page (port of routes/_404.tsx, status 404)
         └── health.ts      # GET /health → JSON health endpoint
 ```
 
@@ -153,10 +153,13 @@ and has no extra billing surface). Served paths must match the references in
 > (no captures under any URL shape), Common Crawl, archive.today, and
 > image-proxy caches all lack these files.
 
-`/styles.css` intentionally disappears: the legacy URL was Fresh's compiled
-Tailwind output, and the port uses Astro's CSS pipeline (hashed `/_astro/*.css`
-URLs). MIGRATION_INVENTORY.md §10 verified nothing external consumes
-`/styles.css`, so the URL change is safe.
+**`/styles.css` is preserved at its exact legacy URL** (MIGRATION_INVENTORY.md
+§3 URL-class parity — the port's mandate is to preserve existing URLs). The
+legacy URL was Fresh's compiled Tailwind output; the port compiles the same
+`@tailwind` directives through Vite/PostCSS (Tailwind v3.4.x, matching the
+legacy 3.4.1 pin) and pins the emitted asset name to `styles.css` via
+`assetFileNames` in `astro.config.ts`, so the built site serves the compiled
+stylesheet at `/styles.css` just like the legacy site.
 
 ## External integrations
 
