@@ -12,7 +12,10 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "wrangler dev -c dist/server/wrangler.json",
-    "deploy": "astro build && wrangler deploy -c dist/server/wrangler.json"
+    "deploy": "astro build && wrangler deploy -c dist/server/wrangler.json",
+    "images:check": "node scripts/self-host-bricklink-images.mjs --check",
+    "images:fetch": "node scripts/self-host-bricklink-images.mjs",
+    "images:rewrite": "node scripts/self-host-bricklink-images.mjs --rewrite"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^14.4.4",
