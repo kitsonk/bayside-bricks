@@ -1,0 +1,261 @@
+name: CI/CD
+
+# Replaces the legacy Deno Deploy workflow (.github/workflows/deploy.yml,
+# deployctl -> Deno Deploy project `bayside-bricks`), retired with the move to
+# Cloudflare Workers (MIGRATION_INVENTORY.md §11.1).
+#
+# Pipeline
+#   verify    every push + PR: install -> typecheck -> build -> deploy dry run -> smoke test
+#   preview   PRs only:       upload an immutable Worker version, smoke its preview URL, comment on the PR
+#   production push to main:  deploy the smoke-tested build, then smoke the live domain
+#
+# Required repository secrets (see web/docs/deploy.md):
+#   CLOUDFLARE_API_TOKEN    scoped Workers + zone token, nothing else
+#   CLOUDFLARE_ACCOUNT_ID   Cloudflare account id
+# Optional repository variable:
+#   PRODUCTION_URL          public URL to smoke after deploy. Unset until the
+#                           DNS cutover: the Worker is verified on its
+#                           workers.dev host, which the deploy step discovers.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: "22"
+
+defaults:
+  run:
+    # The Astro/Workers app lives in web/ until the scaffold is promoted to the
+    # repository root (tracked by t_bc7cf085). Keep every path relative to it.
+    working-directory: web
+
+jobs:
+  # Deploying needs Cloudflare credentials. Rather than fail red on a repo
+  # without them, detect once and let the deploy jobs no-op with a warning —
+  # a fork, a fresh clone or a local secret-less run still gets a green CI on
+  # the part that can actually run (verify). See web/docs/deploy.md.
+  prerequisites:
+    name: Deploy prerequisites
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    defaults:
+      run:
+        working-directory: .
+    outputs:
+      deploy: ${{ steps.check.outputs.deploy }}
+    steps:
+      - name: Check Cloudflare credentials
+        id: check
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CF_TOKEN" ] && [ -n "$CF_ACCOUNT" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "Cloudflare credentials present."
+          else
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::CLOUDFLARE_API_TOKEN and/or CLOUDFLARE_ACCOUNT_ID are not set — deploy jobs will be skipped. See web/docs/deploy.md."
+          fi
+
+  verify:
+    name: Verify (typecheck, build, smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      # Catches bundling/config regressions before anything is uploaded: the
+      # adapter-generated dist/server/wrangler.json is what deploy uses.
+      - name: Validate deploy bundle
+        run: npx wrangler deploy --dry-run --outdir .wrangler/dry-run -c dist/server/wrangler.json
+
+      # Route-table smoke test against `wrangler dev` (the repo has no unit
+      # tests — MIGRATION_INVENTORY.md §7 — so the route table is the suite).
+      - name: Smoke test
+        run: npm test
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist-${{ github.sha }}
+          path: web/dist
+          retention-days: 3
+          if-no-files-found: error
+
+  preview:
+    name: Preview deployment (PR)
+    # Same-repo PRs only: fork PRs get no secrets, so they cannot deploy.
+    # Inputs used in shell below are numeric (PR number) or a commit SHA.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      needs.prerequisites.outputs.deploy == 'true'
+    needs: [prerequisites, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore build output
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist-${{ github.sha }}
+          path: web/dist
+
+      # An immutable version + preview URL: uploads without moving production
+      # traffic. Production stays on the last `wrangler deploy` until merged.
+      - name: Upload preview version
+        id: upload
+        run: |
+          npx wrangler versions upload -c dist/server/wrangler.json \
+            --tag "pr-${{ github.event.pull_request.number }}" \
+            --message "PR #${{ github.event.pull_request.number }} @ ${{ github.event.pull_request.head.sha }}" \
+            | tee version-upload.log
+          url=$(grep -oE 'https://[^[:space:]]+workers\.dev' version-upload.log | head -n1)
+          if [ -z "$url" ]; then
+            echo "::error::could not find a preview URL in the wrangler output"
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test preview deployment
+        run: node scripts/smoke.mjs "${{ steps.upload.outputs.url }}"
+
+      - name: Comment preview URL on PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PREVIEW_URL: ${{ steps.upload.outputs.url }}
+        run: |
+          {
+            echo "**Preview deployment:** $PREVIEW_URL"
+            echo
+            echo "Version \`pr-${{ github.event.pull_request.number }}\` uploaded from ${{ github.event.pull_request.head.sha }}."
+            echo "Route-table smoke test passed against the preview URL."
+            echo
+            echo "_Production traffic is untouched; merge to \`main\` to deploy._"
+          } > preview-comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file preview-comment.md
+
+  production:
+    name: Production deployment (main)
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') &&
+      needs.prerequisites.outputs.deploy == 'true'
+    needs: [prerequisites, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: Production
+      url: ${{ vars.PRODUCTION_URL || 'https://bayside-bricks.me-6d3.workers.dev' }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore build output
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist-${{ github.sha }}
+          path: web/dist
+
+      - name: Deploy to Cloudflare Workers
+        id: deploy
+        run: |
+          npx wrangler deploy -c dist/server/wrangler.json --message "${{ github.sha }}" | tee deploy.log
+          url=$(grep -oE 'https://[^[:space:]]+workers\.dev' deploy.log | head -n1)
+          if [ -z "$url" ]; then
+            echo "::error::could not find the deployed workers.dev URL in the wrangler output"
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      # Smoke the Worker on the host it was actually deployed to. The custom
+      # domain is only smoke-tested once PRODUCTION_URL points at it (after the
+      # DNS cutover, web/docs/deploy.md §4) — before that it still resolves to
+      # the old Deno Deploy site, which is not this build.
+      - name: Smoke test the deployed Worker
+        run: node scripts/smoke.mjs "${{ steps.deploy.outputs.url }}"
+
+      - name: Smoke test the public URL
+        if: vars.PRODUCTION_URL != ''
+        env:
+          PUBLIC_URL: ${{ vars.PRODUCTION_URL }}
+        run: node scripts/smoke.mjs "$PUBLIC_URL"
+
+      - name: Deployment summary
+        env:
+          WORKER_URL: ${{ steps.deploy.outputs.url }}
+          PUBLIC_URL: ${{ vars.PRODUCTION_URL }}
+        run: |
+          {
+            echo "### Production deployment"
+            echo
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Worker URL: $WORKER_URL"
+            if [ -n "$PUBLIC_URL" ]; then
+              echo "- Public URL: $PUBLIC_URL (smoke-tested)"
+            else
+              echo "- Public URL: not set — custom domain not cut over yet (web/docs/deploy.md section 4)"
+            fi
+            echo "- Route-table smoke test: passed"
+            echo
+            echo "Rollback: \`npx wrangler rollback -c dist/server/wrangler.json\` or re-run this job on the last good commit (web/docs/deploy.md §5)."
+          } >> "$GITHUB_STEP_SUMMARY"

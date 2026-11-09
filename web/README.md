@@ -27,6 +27,8 @@ Run all commands from this `web/` directory.
 | `npm run build`       | Production build into `dist/` — worker in `dist/server/`, statics in `dist/client/`                |
 | `npm run preview`     | Serve the production build with `wrangler dev` (requires `npm run build` first) on <http://localhost:8787> |
 | `npm run deploy`      | Build, then `wrangler deploy` the Worker (requires `wrangler login`)                               |
+| `npm run check`       | Type-check the project (`astro check`)                                                            |
+| `npm test`            | Boot `wrangler dev` and run the route-table smoke suite (`scripts/smoke.mjs`) — needs a prior build |
 | `npx wrangler deploy --dry-run -c dist/server/wrangler.json` | Validate the deploy bundle without uploading (requires a prior `npm run build`) |
 
 ## Environment variables
@@ -81,6 +83,11 @@ against the complete 23-file tree. Nothing to migrate, recreate, or seed;
 without a concrete requirement.
 
 ## Deployment assumptions
+
+CI/CD, the `bricks.kitandsimon.com` custom-domain cutover and rollback are
+documented in [`docs/deploy.md`](docs/deploy.md). CI lives in
+`.github/workflows/ci-cd.yml` (it replaced the Deno Deploy `deployctl`
+workflow).
 
 - `npm run build` is always run before any `wrangler dev`/`wrangler deploy`
   invocation against `dist/server/wrangler.json` — the adapter emits that

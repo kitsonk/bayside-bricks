@@ -13,6 +13,9 @@
     "build": "astro build",
     "preview": "wrangler dev -c dist/server/wrangler.json",
     "deploy": "astro build && wrangler deploy -c dist/server/wrangler.json",
+    "test": "node scripts/smoke-local.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "check": "astro check",
     "images:check": "node scripts/self-host-bricklink-images.mjs --check",
     "images:fetch": "node scripts/self-host-bricklink-images.mjs",
     "images:rewrite": "node scripts/self-host-bricklink-images.mjs --rewrite"
@@ -22,11 +25,16 @@
     "astro": "^7.2.0"
   },
   "devDependencies": {
+    "@astrojs/check": "^0.9.12",
     "@types/node": "^24.2.0",
     "autoprefixer": "^10.6.2",
     "postcss": "^8.5.32",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.9.0",
     "wrangler": "^4.156.2"
+  },
+  "allowScripts": {
+    "workerd": true,
+    "esbuild": true
   }
 }
