@@ -127,7 +127,7 @@ web/
         └── health.ts      # GET /health → JSON health endpoint
 ```
 
-## Static assets (migrated 2026-11-07)
+## Static assets (migrated 2026-11-07; images 2026-11-13)
 
 All non-code assets now live in `public/` (Cloudflare R2 was considered and
 rejected: ~10 small files on a single page — Workers Static Assets is simpler
@@ -139,22 +139,20 @@ and has no extra billing surface). Served paths must match the references in
 | `/logo.svg` | legacy `static/logo.svg` | Byte-identical copy (sha256 `88326af4…`; referenced by the 404 page) |
 | `/favicon.ico` | legacy `static/favicon.ico` | Byte-identical copy (sha256 `ceefc31b…`; 3-icon ICO; browser auto-request, not linked in `<head>`) |
 | `/vendor/iframeResizer.contentWindow.3.5.3.min.js` | npm `iframe-resizer@3.5.3` → `js/iframeResizer.contentWindow.min.js` | Vendored; replaces the hotlink to `//cache.bricklink.info/vendor/…` (Bricklink CDN was serving maintenance pages on 2026-11-07). File banner confirms `v3.5.3 - 2016-02-23` — the same version Bricklink vendors, so the parent/child iframe protocol is unchanged |
-| `/img/1035859.JPG` (hero) | `https://www.bricklink.com/myImg/1035859.JPG` | **Not yet fetched** — see note; the legacy source URL had a 4-slash quirk (`https:////www…`), normalised in the port |
-| `/img/1035787.JPG` … `/img/1035792.JPG` (6) | `https://www.bricklink.com/myImg/1035787.JPG` … | **Not yet fetched** — see note; verbatim leaf names |
+| `/img/1035859.JPG` (hero) | `https://www.bricklink.com/myImg/1035859.JPG` | Landed 2026-11-13 — 32,015 B, **640×630**; the legacy source URL had a 4-slash quirk (`https:////www…`), normalised in the port |
+| `/img/1035787.JPG` … `/img/1035792.JPG` (6) | `https://www.bricklink.com/myImg/1035787.JPG` … | Landed 2026-11-13 — all **40×37** thumbnails: `1035787` 1,239 B; `1035788` 1,177 B; `1035789` 1,035 B; `1035790` 1,190 B; `1035791` 1,263 B; `1035792` 1,013 B |
 
-> **Note — image fetch pending (BrickLink outage, 2026-11-06 onwards):**
-> BrickLink took the whole site down on 2026-11-06; its recovery page states it
-> stays unavailable until **at least 1800 CET / 0900 PST on Monday 2026-11-09**
-> (= 04:00 AEDT Tue 10 Nov). Every `www.bricklink.com`, `img.bricklink.com`,
-> `store.bricklink.com` and `cache.bricklink.info` URL 302s to
-> `maintenance.bricklink.com/recovery.html` (or returns an AWS WAF challenge),
-> so the 7 `myImg` JPGs could not be downloaded and are **not** in
-> `public/img/`. `src/pages/index.astro` still hotlinks them; the live Deno
-> site is equally affected.
+> **Note — images landed (2026-11-13):** BrickLink went fully offline on
+> 2026-11-06 and came back on 2026-11-13, at which point all 7 `myImg` JPGs were
+> fetched from the origin and validated (real JPEGs — SOI magic, trailing EOI,
+> SOF frame header — 640×630 hero plus six 40×37 thumbnails). They now live in
+> `public/img/` and `src/pages/index.astro` references `/img/<id>.JPG`
+> exclusively; no image request leaves the Worker. Served bytes are
+> sha256-identical to the files on disk.
 >
-> Landing them is one command. It validates every download (JPEG SOI/EOI magic
-> and SOF dimensions) and refuses to write anything that fails, so a
-> maintenance/redirect response can never be saved as a `.JPG`:
+> The fetch/rewrite tool is kept as the maintenance path if the assets are ever
+> re-sourced. It validates every download and refuses to write anything that
+> fails, so a maintenance/redirect response can never be saved as a `.JPG`:
 >
 > ```sh
 > node scripts/self-host-bricklink-images.mjs --check   # present + still-hotlinked report
@@ -162,13 +160,11 @@ and has no extra billing surface). Served paths must match the references in
 > node scripts/self-host-bricklink-images.mjs --rewrite # point index.astro at /img/<id>.JPG
 > ```
 >
-> If Simon supplies the originals first, use `--originals <dir>` instead of the
-> fetch step (`<dir>/<id>.JPG`, any case). After `--rewrite`: `npm run build`,
-> re-run T1/T3 plus the `/img/…` rows of T6, and commit. Archival fallbacks were
-> re-checked on 2026-11-09 and are empty for these IDs — Wayback CDX exact and
-> prefix queries (neither `.JPG` nor `.jpg`), Common Crawl index (504 at query
-> time), archive.today, image-proxy caches. BrickLink's public API cannot serve
-> `myImg` store uploads.
+> Simon's originals can be used instead of the origin with `--originals <dir>`
+> (`<dir>/<id>.JPG`, any case). Note the validator's size floor is 256 B, not
+> 1 KB: the thumbnails are legitimately ~1 KB (the smallest is 1,013 B), so a
+> larger floor false-positives on a valid file — the magic/EOI/SOF checks are
+> what actually reject a maintenance page.
 
 **`/styles.css` is preserved at its exact legacy URL** (MIGRATION_INVENTORY.md
 §3 URL-class parity — the port's mandate is to preserve existing URLs). The
@@ -183,12 +179,12 @@ stylesheet at `/styles.css` just like the legacy site.
 The legacy app had exactly four integrations (MIGRATION_INVENTORY.md §9).
 Their state after this migration:
 
-1. **7 × Bricklink `myImg` hotlinked images** — to be self-hosted under
-   `/img/` so image availability no longer depends on Bricklink
-   infrastructure. Still blocked on BrickLink's outage (see the note under
-   Static assets): `index.astro` hotlinks the original URLs for now, and
-   `scripts/self-host-bricklink-images.mjs` performs the switch — fetch,
-   validate, rewrite — once the site is back or Simon supplies the originals.
+1. **7 × Bricklink `myImg` hotlinked images** — **closed 2026-11-13**: all 7
+   are self-hosted under `/img/`, so image availability no longer depends on
+   Bricklink infrastructure (provenance and dimensions in the Static assets
+   table). `index.astro` has no remaining `bricklink.com` references;
+   `scripts/self-host-bricklink-images.mjs` stays as the fetch/validate/rewrite
+   maintenance path.
 2. **Bricklink `iframeResizer.contentWindow` script** — was hotlinked to
    `cache.bricklink.info`; now vendored under `/vendor/` at the same version
    (3.5.3). The script tag **must stay in the layout** — see 3.
@@ -208,11 +204,11 @@ integrations (inventory §8/§9.4).
 
 | # | Check | Method | Status |
 | --- | --- | --- | --- |
-| T1 | All migrated assets reachable from `wrangler dev` (`/logo.svg`, `/favicon.ico`, `/img/*.JPG`, `/vendor/…js`) | `npm run build && npm run preview`, then `curl -sI` each path — expect 200 + correct content-type | Executed 2026-11-09 for `/logo.svg`, `/favicon.ico`, `/vendor/…js` (plus `/`, `/styles.css`, 404 table). `/img/*.JPG` **pending** — 0 of 7 landed (BrickLink outage, see Static assets note) |
+| T1 | All migrated assets reachable from `wrangler dev` (`/logo.svg`, `/favicon.ico`, `/img/*.JPG`, `/vendor/…js`) | `npm run build && npm run preview`, then `curl -sI` each path — expect 200 + correct content-type | **Executed 2026-11-13 (7/7 images landed):** each `/img/<id>.JPG` → `200 image/jpeg`, GET body byte-identical to `public/img/` (sha256 match, sizes 32,015 B hero / 1,013–1,263 B thumbs); `/logo.svg`, `/favicon.ico`, `/vendor/…js`, `/`, `/styles.css` and the 404 table re-verified in the same run |
 | T2 | `logo.svg`/`favicon.ico` byte-identical to legacy `static/` | `shasum -a 256` source vs `public/` | Executed (sha256 match) |
-| T3 | Image integrity (valid JPEGs, sane dimensions) | `file` + dimension probe per image | Executed 2026-11-09 for landed images — **none yet**; `node scripts/self-host-bricklink-images.mjs --check` is the probe to run once the 7 land |
+| T3 | Image integrity (valid JPEGs, sane dimensions) | `file` + dimension probe per image | **Executed 2026-11-13:** 7/7 valid — hero `1035859` **640×630**, thumbnails `1035787`–`1035792` all **40×37**; `npm run images:check` exits 0 (7/7 valid, 0 hotlinked). Negative test: a maintenance-style HTML page named `<id>.jpg` is refused on all four grounds (size, SOI, EOI, SOF) and nothing is written |
 | T4 | Vendored script is genuine iframe-resizer 3.5.3 contentWindow | File banner `v3.5.3 - 2016-02-23` + size/hash recorded | Executed (sha256 `b40175f3…`) |
 | T5 | Frame-embeddability: no `X-Frame-Options`/`frame-ancestors` on responses | `curl -sI` on `/` under `wrangler dev` | Executed (absent on `/`, `/styles.css`, 404) |
-| T6 | Rendered HTML references match `public/` paths exactly | Grep `src/` for `img/`, `vendor/`, `logo`, `favicon` refs; each maps to a real file | Executed 2026-11-09: `/logo.svg` + `/vendor/…js` resolve, `/styles.css` 200, all 37 markup utilities present. The 7 `img` refs still point at `bricklink.com/myImg` — closes when `--rewrite` runs |
+| T6 | Rendered HTML references match `public/` paths exactly | Grep `src/` for `img/`, `vendor/`, `logo`, `favicon` refs; each maps to a real file | **Executed 2026-11-13:** the 7 `img` refs are `src="/img/<id>.JPG"` and each resolves 200 from `dist/client/img/`; `/` contains **zero** `bricklink.com/myImg` references; `/logo.svg` + `/vendor/…js` resolve, `/styles.css` 200 |
 | T7 | Bricklink storefront embed renders and auto-resizes | Manual: load the store page containing the iframe after cutover; verify render + resize | **Run at cutover/soak** (needs Bricklink store access — Simon) |
 | T8 | Visual parity of `/` and 404 vs the live Deno Deploy site | Manual side-by-side (layout, images, title strings) | **Run at verification stage** (QA card) |

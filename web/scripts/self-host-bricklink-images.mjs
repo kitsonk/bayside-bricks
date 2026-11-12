@@ -33,12 +33,19 @@ const SELFHOSTED_COMMENT =
   "// The 7 Bricklink myImg JPGs are self-hosted from public/img/ (§13.2); the\n" +
   "// originals were fetched from https://www.bricklink.com/myImg/<id>.JPG.";
 
-/** JPEG sanity: SOI magic, an EOI marker, and a plausible size. */
+/** JPEG sanity: SOI magic, a trailing EOI marker, and a plausible size. */
 function jpegInfo(buf) {
   const problems = [];
-  if (buf.length < 1024) problems.push(`only ${buf.length} bytes`);
+  // 256 B floor only rejects truncation/garbage; the real guards are the SOI/EOI
+  // magic and the SOF walk below. (BrickLink's 40x37 thumbnails are ~1 KB, so a
+  // 1024 B floor false-positived on a perfectly valid 1013 B file.)
+  if (buf.length < 256) problems.push(`only ${buf.length} bytes`);
   if (!(buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)) problems.push("missing JPEG SOI magic (ffd8ff)");
-  if (buf.indexOf(Buffer.from([0xff, 0xd9])) < 0) problems.push("no JPEG EOI marker (ffd9)");
+  // EOI must be the last meaningful bytes (trailing NUL/newline padding tolerated)
+  // rather than merely present somewhere, so embedded thumbnail data can't satisfy it.
+  let end = buf.length - 1;
+  while (end > 0 && (buf[end] === 0x00 || buf[end] === 0x0a || buf[end] === 0x0d || buf[end] === 0x20)) end--;
+  if (!(buf[end - 1] === 0xff && buf[end] === 0xd9)) problems.push("no trailing JPEG EOI marker (ffd9)");
   // Walk the marker chain for the first SOFn to report dimensions.
   let w = null, h = null;
   for (let i = 2; i + 9 < buf.length; ) {

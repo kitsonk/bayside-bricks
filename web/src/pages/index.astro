@@ -2,15 +2,15 @@
 // Port of routes/index.tsx — markup verbatim (MIGRATION_INVENTORY.md §12).
 // One deliberate change: the hero image URL's 4-slash quirk
 // (https:////www.bricklink.com/...) is normalised to https:// (§13.4).
-// The 7 Bricklink myImg JPGs remain hotlinked at their original URLs for
-// parity; self-hosting into public/img/ is owned by the assets card (§13.2).
+// The 7 Bricklink myImg JPGs are self-hosted from public/img/ (§13.2); the
+// originals were fetched from https://www.bricklink.com/myImg/<id>.JPG.
 import Base from "../layouts/Base.astro";
 ---
 
 <Base title="Bayside Brickstore">
   <div class="relative text-right w-full">
     <img
-      src="https://www.bricklink.com/myImg/1035859.JPG"
+      src="/img/1035859.JPG"
       alt="Bayside Brickstore Logo"
       class="h-96 mt-2 mr-2 ml-auto"
     />
@@ -23,19 +23,19 @@ import Base from "../layouts/Base.astro";
         <li class="flex items-center">
           <img
             class="mr-4"
-            src="https://www.bricklink.com/myImg/1035787.JPG"
+            src="/img/1035787.JPG"
           />Complete, used sets, many with original packaging;
         </li>
         <li class="flex items-center">
           <img
             class="mr-4"
-            src="https://www.bricklink.com/myImg/1035788.JPG"
+            src="/img/1035788.JPG"
           />New and used minifigures;
         </li>
         <li class="flex items-center">
           <img
             class="mr-4"
-            src="https://www.bricklink.com/myImg/1035789.JPG"
+            src="/img/1035789.JPG"
           />Rare bricks and other parts, with new items added daily.
         </li>
       </ul>
@@ -46,7 +46,7 @@ import Base from "../layouts/Base.astro";
         <li class="flex items-center">
           <img
             class="mr-4"
-            src="https://www.bricklink.com/myImg/1035790.JPG"
+            src="/img/1035790.JPG"
           />Every item, every brick, every minifigure that we sell has been
           individually checked, and double-checked to ensure you know what you
           are buying.
@@ -54,7 +54,7 @@ import Base from "../layouts/Base.astro";
         <li class="flex items-center">
           <img
             class="mr-4"
-            src="https://www.bricklink.com/myImg/1035791.JPG"
+            src="/img/1035791.JPG"
           />Most used items are sold in near-new condition. Where this is not
           the case, we aim to describe imperfections so you can make an
           informed choice. Unlike other stores, "used" doesn't leave you
@@ -63,7 +63,7 @@ import Base from "../layouts/Base.astro";
         <li class="flex items-center">
           <img
             class="mr-4"
-            src="https://www.bricklink.com/myImg/1035792.JPG"
+            src="/img/1035792.JPG"
           />Instant checkouts and fast shipping anywhere across Australia or
           internationally, with discounted or free shipping for larger orders.
         </li>
