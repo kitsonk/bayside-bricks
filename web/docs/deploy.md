@@ -361,3 +361,5 @@ npx wrangler rollback -c dist/server/wrangler.json                    # previous
 Never add `X-Frame-Options` or a CSP `frame-ancestors` directive: the page is
 embedded in the BrickLink storefront iframe (MIGRATION_INVENTORY.md §9.3). The
 smoke suite fails the build if either appears.
+
+<!-- preview pipeline verification probe (throwaway) -->
