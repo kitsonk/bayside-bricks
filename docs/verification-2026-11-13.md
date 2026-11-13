@@ -160,7 +160,21 @@ retry, timeout or 5xx was observed from either `curl` or Chromium.
    path is the 404 page. During the soak two requests did reach the Worker,
    which is the same edge-dependent behaviour `ci-cd.md` §7.2 describes.
 
-## 10. Sign-off
+## 10. Re-run confirmation (independent, later the same day)
+
+The battery was repeated end to end at 05:21Z–05:24Z against the same production
+deployment, by the retry of this card, to confirm the record above is still
+current rather than a snapshot of one window:
+
+| Check | Result |
+| --- | --- |
+| `npm run verify:prod -- --legacy https://bricks.kitsonkelly.deno.net` | **63/63 passed**, the same 2 warnings (POST `/`, cleartext HTTP) and 1 informational (`/robots.txt`) |
+| `npm run smoke -- https://bricks.kitandsimon.com --images` | **21/21 passed, 1 skipped** (Cloudflare's managed `robots.txt`) |
+| Legacy parity within the same run | text and class sets byte-equal on `/` and `/nonexistent` |
+| Fresh soak (`npx wrangler tail bayside-bricks --format json`) | 96 requests driven over ~50 s → **60 Worker invocations** (statics bypass the Worker), `outcome: ok` ×60, **0 exceptions**, 0 non-`ok` outcomes, 0 diagnostics, 24 × `200` / 36 × `404`, all on version `a9a0be6d…` |
+| `https://bricks.kitsonkelly.deno.net/` | still `200` — the fallback is still intact, as `decommission.md` §2 states |
+
+## 11. Sign-off
 
 Application side: **verified, no critical errors, production is the Worker at
 `f29d918`.** Two items remain outside this card's gift:
