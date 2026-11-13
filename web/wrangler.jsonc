@@ -24,11 +24,21 @@
   // Deploying this route does NOT require the zone to be active: a deploy
   // against the still-pending kitandsimon.com zone succeeds and the hostname
   // serves as soon as the registrar points at Cloudflare's nameservers.
-  // `workers_dev` stays enabled (default) — the workers.dev host is the
-  // pre-cutover production target and the rollback surface.
   //
-  // Preview deployments are unaffected: `wrangler versions upload` ignores
-  // triggers and never moves production traffic or routes.
+  // `workers_dev` and `preview_urls` are declared EXPLICITLY, not left to
+  // wrangler's defaults. Once a config carries `routes`, wrangler disables
+  // workers.dev for the deployment by default, which silently removed
+  // https://bayside-bricks.me-6d3.workers.dev — the pre-cutover production
+  // host and the rollback surface — while the zone is still pending (deploy of
+  // 2aa4a1e, run 43356057677: the host answered 404 and the production job
+  // failed because it could not find a workers.dev URL to smoke). Declaring
+  // both keeps that host, and keeps `wrangler versions upload` emitting the
+  // per-version preview URLs that the PR preview job parses.
+  //
+  // Preview deployments still cannot touch production: `wrangler versions
+  // upload` ignores triggers and never moves traffic or routes.
+  "workers_dev": true,
+  "preview_urls": true,
   "routes": [
     { "pattern": "bricks.kitandsimon.com", "custom_domain": true }
   ],
