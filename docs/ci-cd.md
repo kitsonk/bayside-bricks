@@ -221,12 +221,12 @@ not start the cutover with an unchecked box.
 | 1 | `CI` green on the target commit | `gh run list --workflow CI --repo kitsonk/bayside-bricks --limit 5` | `success` on `main` |
 | 2 | `CI/CD` production job green on the same commit | `gh run list --workflow CI/CD --repo kitsonk/bayside-bricks --limit 5` | `success`, production step included |
 | 3 | Worker answers on workers.dev | `curl -sS -o /dev/null -w '%{http_code}\n' https://bayside-bricks.me-6d3.workers.dev/` | `200` |
-| 4 | Full smoke suite passes on the Worker | `cd web && node scripts/smoke.mjs https://bayside-bricks.me-6d3.workers.dev --images` | `21/21 checks passed, 1 skipped` |
+| 4 | Full smoke suite passes on the Worker | `cd ~/github/bayside-bricks && node scripts/smoke.mjs https://bayside-bricks.me-6d3.workers.dev --images` | `21/21 checks passed, 1 skipped` |
 | 5 | Zone exists and nameservers are assigned | `curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID" \| jq '.result \| {status, name_servers}'` | `pending`, `danica`/`vicente` (or `active` if already cut over) |
 | 6 | Zone records complete (12) | Cloudflare dashboard → `kitandsimon.com` → DNS, or §4 | MX ×5, SPF, apex A, www, 4 Google CNAMEs, `bricks` |
 | 7 | Custom domain bound to the Worker | §4 verify snippet | `bricks.kitandsimon.com -> bayside-bricks` |
 | 8 | Registrar access works **before** it is needed | the read-only `sso-key` block in §6 step 5 | `ACTIVE` plus `danica`/`vicente` |
-| 9 | Rollback target identified | `cd web && npx wrangler deployments list --name bayside-bricks` | previous good deployment + version id noted in the ticket |
+| 9 | Rollback target identified | `cd ~/github/bayside-bricks && npx wrangler deployments list --name bayside-bricks` | previous good deployment + version id noted in the ticket |
 | 10 | Deno Deploy fallback confirmed, or its loss accepted | `curl -sS https://bricks.kitsonkelly.deno.net/ -o /dev/null -w '%{http_code}\n'` | `200` — the legacy Fresh app; see §8.4 if not |
 | 11 | `PRODUCTION_URL` decision made | `gh variable list --repo kitsonk/bayside-bricks` | unset before cutover; set as step 8 |
 | 12 | Simon briefed, change window agreed | — | written confirmation |
@@ -256,7 +256,7 @@ technical — see §9).
 ### Step 1 — confirm the Worker is the thing you are cutting over to
 
 ```bash
-cd web
+cd ~/github/bayside-bricks
 npx wrangler deployments status --name bayside-bricks --json \
   | jq '{deployment: .id, version: .versions[0].version_id, commit: .annotations["workers/message"]}'
 node scripts/smoke.mjs https://bayside-bricks.me-6d3.workers.dev --images
@@ -294,7 +294,7 @@ into an outage.
 ### Step 4 — attach the custom domain (a deploy does it)
 
 ```bash
-cd web
+cd ~/github/bayside-bricks
 npm ci && npm run build
 npx wrangler deploy -c dist/server/wrangler.json --message "cutover $(git rev-parse --short HEAD)"
 ```
@@ -390,8 +390,8 @@ The run must be green, and its summary must show a smoke of
 | Health | `curl -sS https://bricks.kitandsimon.com/health` | `{"status":"ok",...}` |
 | 404 parity | `curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitandsimon.com/nonexistent` | `404` |
 | No frame blocking | `curl -sSI https://bricks.kitandsimon.com/ \| grep -i 'x-frame-options\|frame-ancestors'` | no output (the page is iframed by BrickLink) |
-| Full route-table suite, Worker host | `cd web && node scripts/smoke.mjs https://bayside-bricks.me-6d3.workers.dev --images` | `21/21 checks passed, 1 skipped` |
-| Full route-table suite, public host | `cd web && node scripts/smoke.mjs https://bricks.kitandsimon.com --images` | same counts — **only from a resolver that answers for `bricks`** (§7.1) |
+| Full route-table suite, Worker host | `cd ~/github/bayside-bricks && node scripts/smoke.mjs https://bayside-bricks.me-6d3.workers.dev --images` | `21/21 checks passed, 1 skipped` |
+| Full route-table suite, public host | `cd ~/github/bayside-bricks && node scripts/smoke.mjs https://bricks.kitandsimon.com --images` | same counts — **only from a resolver that answers for `bricks`** (§7.1) |
 | Previews unaffected | open a throwaway PR, watch `CI/CD` | preview job green, sticky comment, production deployment id unchanged |
 | Mail round trip | send to and from a `@kitandsimon.com` address | delivered both ways |
 
@@ -466,7 +466,7 @@ flowchart TD
 ### R1 — bad Worker release (fastest, least risky)
 
 ```bash
-cd web
+cd ~/github/bayside-bricks
 npx wrangler deployments status --name bayside-bricks --json   # what is live now
 npx wrangler versions list --name bayside-bricks               # candidates
 npx wrangler rollback --name bayside-bricks -y -m "rollback: <reason>"
@@ -513,7 +513,7 @@ gh run rerun 43357061499 --repo kitsonk/bayside-bricks
 Bypass CI entirely if Actions is the broken part:
 
 ```bash
-cd web && npm ci && npm run build
+cd ~/github/bayside-bricks && npm ci && npm run build
 export CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=6d3c3bec6c29c262b87b782e7a7b12de
 npx wrangler deploy -c dist/server/wrangler.json --message "manual: <reason>"
 ```
@@ -532,7 +532,7 @@ curl -sS -X DELETE -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains/$CF_DOMAIN_ID"
 
 # re-attach: the declaration in wrangler.jsonc is the source of truth
-cd web && npx wrangler deploy -c dist/server/wrangler.json
+cd ~/github/bayside-bricks && npx wrangler deploy -c dist/server/wrangler.json
 ```
 
 TLS is issued automatically when the hostname resolves to Cloudflare; a warning
@@ -618,7 +618,7 @@ critical ones: `aspmx.l.google.com` priority 1, `alt1`/`alt2` priority 5,
 ### R6 — recreate the Worker (last resort)
 
 ```bash
-cd web && npm ci && npm run build
+cd ~/github/bayside-bricks && npm ci && npm run build
 npx wrangler deploy -c dist/server/wrangler.json --message "recreate: <reason>"
 # only if the Worker must be removed entirely — this drops the script, its versions
 # and its custom-domain binding

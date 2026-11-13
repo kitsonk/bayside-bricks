@@ -33,7 +33,7 @@ The local resolver answered correctly for `bricks` during this run, so no
 over DoH regardless. Scripts are committed, so the whole battery is repeatable:
 
 ```bash
-cd web
+cd ~/github/bayside-bricks
 npm run verify:prod -- --legacy https://bricks.kitsonkelly.deno.net
 npm run smoke -- https://bricks.kitandsimon.com --images
 ```
