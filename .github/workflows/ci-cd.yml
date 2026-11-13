@@ -200,6 +200,7 @@ jobs:
             json='{}'
           fi
           deployment=$(jq -r '.id // ""' <<<"$json")
+          deployment="${deployment}-NEGATIVE-TEST" # TEMPORARY: prove the guard goes red
           version=$(jq -r '.versions[0].version_id // ""' <<<"$json")
           echo "deployment=$deployment" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
