@@ -37,6 +37,12 @@ name: CI/CD
 # zone is still pending (it serves once the registrar points at Cloudflare).
 # `wrangler versions upload` (previews) ignores triggers entirely, so a PR
 # cannot move production traffic or rewrite the production route.
+#
+# Preview URLs are a separate per-Worker switch (Workers & Pages → the Worker →
+# Settings → Preview URLs) and a production `wrangler deploy` turned it off
+# once, silently suppressing the `Version Preview URL:` line. The preview job
+# therefore re-asserts it on every run, preserving the workers.dev/route switch
+# exactly as the deploy job left it. See web/docs/deploy.md.
 
 on:
   push:
@@ -138,6 +144,52 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Preview URLs are a per-Worker setting, independent of workers.dev and of
+      # any route. A production `wrangler deploy` has already turned it off once
+      # (the #6 custom-domain deploy), and when it is off wrangler silently
+      # stops printing `Version Preview URL:` — so the preview job must own it
+      # rather than assume it. Enabling is idempotent and never touches
+      # `enabled` (the workers.dev/route traffic switch), so production's
+      # semantics are left exactly as the deploy job set them.
+      - name: Ensure preview URLs are enabled
+        id: previews
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WORKER: bayside-bricks
+        run: |
+          set -euo pipefail
+          api=https://api.cloudflare.com/client/v4
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          worker=$(curl -sS --retry 3 --retry-delay 2 -H "$auth" \
+            "$api/accounts/$CF_ACCOUNT_ID/workers/workers/$WORKER")
+          if [ "$(jq -r '.success // false' <<<"$worker")" != "true" ]; then
+            echo "::error::could not read the $WORKER Worker record — the token needs Workers Scripts: Edit"
+            jq -r '.errors[]?.message' <<<"$worker" || true
+            exit 1
+          fi
+          enabled=$(jq -r '.result.subdomain.enabled // false' <<<"$worker")
+          previews=$(jq -r '.result.subdomain.previews_enabled // false' <<<"$worker")
+          suffix=$(jq -r '.result.subdomain.preview_url_suffix // ""' <<<"$worker")
+          if [ "$previews" != "true" ]; then
+            echo "Preview URLs are disabled on $WORKER — enabling them (workers.dev/route traffic left at enabled=$enabled)."
+            body=$(jq -nc --argjson enabled "$enabled" '{enabled: $enabled, previews_enabled: true}')
+            resp=$(curl -sS --retry 3 --retry-delay 2 -X POST -H "$auth" \
+              -H 'content-type: application/json' --data "$body" \
+              "$api/accounts/$CF_ACCOUNT_ID/workers/scripts/$WORKER/subdomain")
+            if [ "$(jq -r '.success // false' <<<"$resp")" != "true" ]; then
+              echo "::error::could not enable preview URLs on $WORKER"
+              jq -r '.errors[]?.message' <<<"$resp" || true
+              exit 1
+            fi
+            echo "::notice::enabled preview URLs on $WORKER; a production deploy had left them off."
+          fi
+          if [ -z "$suffix" ]; then
+            echo "::error::Cloudflare returned no preview_url_suffix for $WORKER — cannot derive a preview URL"
+            exit 1
+          fi
+          echo "suffix=$suffix" >> "$GITHUB_OUTPUT"
+          echo "Preview URL suffix: $suffix (workers.dev enabled=$enabled)"
+
       # Baseline for the isolation assertion after the upload.
       - name: Record the live production deployment
         id: baseline
@@ -148,7 +200,6 @@ jobs:
             json='{}'
           fi
           deployment=$(jq -r '.id // ""' <<<"$json")
-          deployment="${deployment}-NEGATIVE-TEST" # TEMPORARY: prove the guard goes red
           version=$(jq -r '.versions[0].version_id // ""' <<<"$json")
           echo "deployment=$deployment" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -171,8 +222,16 @@ jobs:
           # a preview.
           url=$(grep -F 'Version Preview URL:' version-upload.log | grep -oE 'https://[^[:space:]]+' | head -n1 || true)
           version=$(grep -F 'Worker Version ID:' version-upload.log | grep -oE '[0-9a-f]{8}-[0-9a-f-]{27}' | head -n1 || true)
+          # wrangler prints the preview URL only when it also manages to read the
+          # Worker's subdomain settings; the URL itself is deterministic —
+          # https://<first 8 chars of the version id><preview_url_suffix> — so
+          # derive it rather than fail a working upload on a log line.
+          if [ -z "$url" ] && [ -n "$version" ]; then
+            url="https://${version:0:8}${{ steps.previews.outputs.suffix }}"
+            echo "No 'Version Preview URL:' line in wrangler's output; derived $url from the version id."
+          fi
           if [ -z "$url" ]; then
-            echo "::error::could not find a 'Version Preview URL:' line in the wrangler output"
+            echo "::error::could not determine the preview URL: no 'Version Preview URL:' line and no 'Worker Version ID:' to derive it from"
             exit 1
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
@@ -186,16 +245,28 @@ jobs:
           BASELINE_VERSION: ${{ steps.baseline.outputs.version }}
           PREVIEW_URL: ${{ steps.upload.outputs.url }}
           PREVIEW_VERSION: ${{ steps.upload.outputs.version }}
+          PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
         run: |
           set -euo pipefail
-          prod_url='https://bayside-bricks.me-6d3.workers.dev'
 
-          case "${PREVIEW_URL%/}" in
-            "$prod_url")
-              echo "::error::the preview URL is the production host — this is not a preview"
+          # Every hostname production can be served from. `enabled: false` on
+          # the Worker today means the workers.dev host 404s rather than serving
+          # the site, but it is production's URL the moment that flag flips
+          # back, so a preview must never be any of these.
+          preview_host=${PREVIEW_URL#https://}
+          preview_host=${preview_host%%/*}
+          for host in \
+            'bayside-bricks.me-6d3.workers.dev' \
+            'bricks.kitandsimon.com' \
+            "${PRODUCTION_URL:+${PRODUCTION_URL#https://}}"; do
+            [ -n "$host" ] || continue
+            host=${host%%/*}
+            if [ "$preview_host" = "$host" ]; then
+              echo "::error::the preview URL host ($preview_host) is production's ($host) — this is not a preview"
               exit 1
-              ;;
-          esac
+            fi
+          done
+          echo "Preview host $preview_host is not any production host."
 
           if [ -n "$BASELINE_DEPLOYMENT" ]; then
             json=$(npx wrangler deployments status -c dist/server/wrangler.json --json)
@@ -213,15 +284,15 @@ jobs:
             fi
             echo "Production deployment unchanged: $now_deployment ($now_version)."
           else
-            echo "::warning::no baseline deployment recorded — asserting isolation on production health only"
+            echo "::warning::no baseline deployment recorded — isolation asserted on hostname disjointness only"
           fi
 
-          code=$(curl -s -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 2 "$prod_url/health")
-          if [ "$code" != "200" ]; then
-            echo "::error::production /health returned $code after the preview upload"
-            exit 1
-          fi
-          echo "Production /health: 200."
+          # Deliberately no production /health probe here. It would couple every
+          # PR's verdict to production's own availability and DNS state (the
+          # custom domain in #6 does not resolve yet, and the workers.dev host is
+          # currently disabled), which is the production job's business and not
+          # evidence about isolation. The deployment-id/version comparison above
+          # is the stronger, host-independent invariant.
 
       - name: Smoke test preview deployment
         run: node scripts/smoke.mjs "${{ steps.upload.outputs.url }}"

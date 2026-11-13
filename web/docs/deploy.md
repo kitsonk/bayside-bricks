@@ -40,19 +40,35 @@ Every same-repo PR gets a preview on each push (`opened`, `synchronize`,
 `reopened`). The `preview` job in `ci-cd.yml`:
 
 1. rebuilds the PR head (`npm ci` → `npm run build`);
-2. records the live production deployment id and version
+2. enables **preview URLs** on the Worker if they are off (see below), because
+   without them wrangler uploads the version but prints no preview URL;
+3. records the live production deployment id and version
    (`wrangler deployments status --json`);
-3. uploads an immutable version — `npx wrangler versions upload` tagged
-   `pr-<number>` — and parses the `Version Preview URL:` and
-   `Worker Version ID:` lines out of wrangler's output;
-4. **asserts production was not touched**: the active deployment id and version
+4. uploads an immutable version — `npx wrangler versions upload` tagged
+   `pr-<number>` — and takes the preview URL from the `Version Preview URL:`
+   line, falling back to the deterministic
+   `https://<first 8 of version id><preview_url_suffix>` when wrangler prints no
+   URL for a version that uploaded fine;
+5. **asserts production was not touched**: the active deployment id and version
    must be unchanged, the preview version must not be the version production
-   serves, the preview URL must not be the production host, and production
-   `/health` must still return 200. Any of those failing fails the job;
-5. runs the route-table smoke suite against the preview URL;
-6. creates or updates one sticky PR comment (marker
+   serves, and the preview host must not be any production hostname (workers.dev,
+   the custom domain, `PRODUCTION_URL`). Any of those failing fails the job;
+6. runs the route-table smoke suite against the preview URL;
+7. creates or updates one sticky PR comment (marker
    `<!-- preview-deployment -->`) with the URL, commit, version and the
    production deployment id — so a busy PR gets one comment, not one per push.
+
+The preview job deliberately does not probe production `/health`: that would tie
+every PR's verdict to production's own availability and DNS state, and says
+nothing about isolation. Deployment identity is the stronger invariant.
+
+**Preview URLs must be enabled on the Worker.** This is an account setting
+separate from `workers_dev` and from any route; a version preview URL exists
+only while it is on. It was off after the custom-domain deploy in #6 — wrangler
+then uploads the version and prints no `Version Preview URL:` line, and old
+preview URLs 404. The preview job turns it on idempotently, sending the current
+`enabled` value back unchanged so the workers.dev/route switch stays exactly as
+the production deploy set it. No production traffic or routing is touched.
 
 Isolation is structural, not just behavioural:
 
