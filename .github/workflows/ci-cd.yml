@@ -194,12 +194,23 @@ jobs:
         id: deploy
         run: |
           npx wrangler deploy -c dist/server/wrangler.json --message "${{ github.sha }}" | tee deploy.log
-          url=$(grep -oE 'https://[^[:space:]]+workers\.dev' deploy.log | head -n1)
+
+          # `|| true` is load-bearing: grep exits 1 when it finds nothing, and
+          # under `set -e` + pipefail that aborted the step before the
+          # diagnostic below could run (run 43356057677 failed with a bare
+          # "Process completed with exit code 1" and no explanation).
+          url=$(grep -oE 'https://[^[:space:]]+workers\.dev' deploy.log | head -n1 || true)
           if [ -z "$url" ]; then
-            echo "::error::could not find the deployed workers.dev URL in the wrangler output"
+            echo "::error::wrangler deployed, but its output has no workers.dev URL to smoke. \`\"workers_dev\": true\` in web/wrangler.jsonc is load-bearing: without it wrangler disables workers.dev whenever \`routes\` is present, which removes the only host that serves this build before the DNS cutover."
+            grep -iE 'workers_dev|workers\.dev' deploy.log || true
             exit 1
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
+
+          version=$(grep -oE 'Current Version ID: [0-9a-f]{8}-[0-9a-f-]{27}' deploy.log \
+            | grep -oE '[0-9a-f]{8}-[0-9a-f-]{27}' | head -n1 || true)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Deployed $url (version ${version:-unknown})"
 
       # The deploy above applies the `routes` entry from web/wrangler.jsonc, so
       # the custom-domain binding is reproducible rather than a one-off
@@ -220,19 +231,32 @@ jobs:
           auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
 
           domains=$(curl -sS --retry 3 --retry-delay 2 -H "$auth" \
-            "$api/accounts/$CF_ACCOUNT_ID/workers/domains?per_page=50")
-          if [ "$(jq -r '.success // false' <<<"$domains")" != "true" ]; then
-            echo "::error::could not list Worker custom domains — the token needs Zone → Workers Routes: Edit and Workers Scripts: Edit (web/docs/deploy.md §2)"
+            "$api/accounts/$CF_ACCOUNT_ID/workers/domains?per_page=50" || echo '{}')
+          if [ "$(jq -r '.success // false' <<<"$domains")" = "true" ]; then
+            bound=$(jq -r --arg d "$DOMAIN" --arg w "$WORKER" \
+              '.result[] | select(.hostname == $d and .service == $w) | .hostname' <<<"$domains")
+            if [ "$bound" != "$DOMAIN" ]; then
+              echo "::error::$DOMAIN is not bound to Worker $WORKER. It is declared in web/wrangler.jsonc routes, so the deploy should have attached it — check the token's Workers Routes scope."
+              exit 1
+            fi
+            echo "::notice::$DOMAIN is bound to $WORKER."
+          else
+            # Reading the custom-domain listing needs a Workers Routes read on
+            # the token. The deploy has already proved the trigger landed:
+            # wrangler prints the attached triggers from the API response. So a
+            # token that cannot read the listing degrades this to a warning
+            # instead of failing a deploy that is actually fine — but only when
+            # the deploy's own output names the hostname.
             jq -r '.errors[]?.message' <<<"$domains" || true
-            exit 1
+            if grep -qF "$DOMAIN (custom domain)" deploy.log; then
+              echo "::warning::could not list Worker custom domains with this token, but \`wrangler deploy\` reported '$DOMAIN (custom domain)' as an attached trigger. Add Workers Routes: Read (web/docs/deploy.md §2) to verify the binding from CI."
+              bound="$DOMAIN (reported by wrangler deploy)"
+            else
+              echo "::error::could not list Worker custom domains and the deploy did not report $DOMAIN as an attached trigger — the token needs Zone → Workers Routes: Edit (web/docs/deploy.md §2)"
+              exit 1
+            fi
           fi
-          bound=$(jq -r --arg d "$DOMAIN" --arg w "$WORKER" \
-            '.result[] | select(.hostname == $d and .service == $w) | .hostname' <<<"$domains")
-          if [ "$bound" != "$DOMAIN" ]; then
-            echo "::error::$DOMAIN is not bound to Worker $WORKER. It is declared in web/wrangler.jsonc routes, so the deploy should have attached it — check the token's Workers Routes scope."
-            exit 1
-          fi
-          echo "::notice::$DOMAIN is bound to $WORKER."
+          echo "domain=$bound" >> "$GITHUB_OUTPUT"
 
           # Advisory: the zone cannot serve until the registrar delegates to
           # Cloudflare's nameservers (web/docs/deploy.md §4). A read failure is

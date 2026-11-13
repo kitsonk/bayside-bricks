@@ -12,7 +12,7 @@ The pair replaced the Deno Deploy `deployctl` workflow in the same change
 | --- | --- |
 | CI (`verify` in `ci.yml`) | green on `main` — install → typecheck → build → deploy dry run → asset check → route-table smoke |
 | Preview deployment | works: `wrangler versions upload` produces an immutable preview URL that passes the smoke suite |
-| Production deployment | works: `wrangler deploy` serves `https://bayside-bricks.me-6d3.workers.dev` (smoke green) |
+| Production deployment | works: `wrangler deploy` deploys the Worker, re-applies the custom domain, and the job smokes `https://bayside-bricks.me-6d3.workers.dev` (§3) |
 | Custom domain `bricks.kitandsimon.com` | **declared** in `wrangler.jsonc` (`routes` + `custom_domain`) and **attached** to Worker `bayside-bricks` (custom-domain id `775a47a8…`, cert `531f7afa…`); every production deploy re-applies it and verifies the binding — serves as soon as the zone is active |
 | Deno Deploy | untouched, last good deployment retained as rollback — but not currently reachable, because the domain itself does not resolve (below) |
 | **INCIDENT (2026-11-13)** | `kitandsimon.com` returns `SERVFAIL`: the registrar still delegates to the old Cloudflare pair while the zone lives on a new pair. Mail and web are down until the nameserver flip in §4. See §3. |
@@ -131,7 +131,33 @@ gh secret set CLOUDFLARE_ACCOUNT_ID --repo kitsonk/bayside-bricks --body 6d3c3be
   `GET /accounts/{id}/workers/domains` (it fails the job if the hostname is
   not bound to `bayside-bricks`, and reports the zone's activation status as
   a warning). That check is what proves the declaration actually landed,
-  because `wrangler deploy` succeeds on the script upload regardless.
+  because `wrangler deploy` succeeds on the script upload regardless. If the
+  token cannot read the listing, the job falls back to wrangler's own
+  `bricks.kitandsimon.com (custom domain)` trigger line and warns instead of
+  failing a deploy that is fine.
+
+### `workers_dev` and `preview_urls` are declared, not inherited
+
+`wrangler.jsonc` sets both to `true` explicitly:
+
+```jsonc
+"workers_dev": true,
+"preview_urls": true,
+```
+
+This is load-bearing, not tidiness. As soon as a config carries `routes`,
+wrangler **disables workers.dev for that deployment by default** and says so
+only in a warning line. Declaring the route therefore silently removed
+`https://bayside-bricks.me-6d3.workers.dev` — the pre-cutover production host
+and the rollback surface — on the deploy of `2aa4a1e` (run 43356057677): the
+host returned 404 and the production job failed because it had no workers.dev
+URL to smoke. With `preview_urls` unset and workers.dev disabled, per-version
+preview URLs are disabled too, which is what `wrangler versions upload` needs to
+print a preview URL for a PR.
+
+Once the cutover in §4 is done and `PRODUCTION_URL` points at the custom domain,
+disabling workers.dev is a deliberate follow-up (drop both keys, smoke
+`PRODUCTION_URL` only) — not something to leave to a default.
 
 ### The zone, as built (2026-11-13)
 
