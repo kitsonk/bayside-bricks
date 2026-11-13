@@ -24,12 +24,13 @@ const IMAGE_IDS = ["1035859", "1035787", "1035788", "1035789", "1035790", "10357
 const args = process.argv.slice(2);
 const checkImages = args.includes("--images");
 const base = (args.find((a) => !a.startsWith("--")) ?? DEFAULT_BASE).replace(/\/+$/, "");
-// *.workers.dev is fronted by Cloudflare, which serves its own boilerplate
-// /robots.txt (content-signal directives) regardless of the Worker's routes.
-// The legacy site 404s that path, and the custom domain must too — so the
-// assertion stays strict everywhere except the workers.dev preview/production
-// host, where the platform response is reported as SKIP instead of PASS/FAIL.
-const isWorkersDev = /\.workers\.dev$/i.test(new URL(base).hostname);
+// Cloudflare serves its own managed /robots.txt (content-signal directives) on
+// every host it fronts — *.workers.dev *and* the proxied custom domain — before
+// the request reaches the Worker. The legacy site 404s that path, so the
+// assertion still asks for a 404, but a platform-served content-signal document
+// is reported as SKIP rather than FAIL: the Worker never sees that request, and
+// failing on it would condemn a deployment that is actually healthy. Verified
+// on the custom domain 2026-11-13, the first day it resolved.
 
 /** @type {{name: string, url: string, method?: string, status: number, type?: RegExp, body?: RegExp, headers?: Record<string, RegExp>}[]} */
 const cases = [
@@ -106,12 +107,12 @@ for (const c of cases) {
       }
     }
     if (ok) detail = `${res.status} ${type || "(no content-type)"}`.trim();
-    // Cloudflare's workers.dev boilerplate robots.txt is platform behaviour, not
-    // app behaviour: report it as skipped rather than a failure.
-    if (!ok && isWorkersDev && c.url === "/robots.txt" && /content-signal/i.test(body)) {
+    // Cloudflare's managed robots.txt is platform behaviour, not app behaviour:
+    // it is injected on workers.dev and on the proxied custom domain alike.
+    if (!ok && c.url === "/robots.txt" && /content-signal/i.test(body)) {
       ok = true;
       skipped = true;
-      detail = `SKIP: merged/replaced by Cloudflare's workers.dev robots.txt (content-signal, ${body.length} bytes) — asserts 404 on the custom domain`;
+      detail = `SKIP: served by Cloudflare's managed robots.txt (content-signal, ${body.length} bytes) before the Worker — asserts 404 where Cloudflare does not inject one`;
     }
   } catch (err) {
     ok = false;
