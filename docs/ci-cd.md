@@ -37,7 +37,6 @@ flowchart TD
 | Cloudflare account (Worker, zone, custom domain) | Kitson Kelly | Super Administrator, or a scoped API token (§3.2) | `wrangler login` OAuth session on the operator's machine; 1Password item **Cloudflare** for the dashboard (password + TOTP) |
 | Registrar `kitandsimon.com` (GoDaddy) | Kitson Kelly | domain ownership; API key for scripted changes | 1Password item **Godaddy**, field `API Key and secret` (key and secret on two lines — §6 step 5) |
 | BrickLink storefront, embed sign-off, business acceptance | Simon | BrickLink store admin | — |
-| Deno Deploy project `kitsonkelly/bricks` (legacy, live fallback) | Kitson Kelly | Deno Deploy dashboard access | **not stored locally** — see §8.4 |
 
 Rules of engagement:
 
@@ -63,7 +62,7 @@ Rules of engagement:
 | Registrar | GoDaddy, status `ACTIVE`, delegating to the pair above |
 | Workflows | `CI` (`ci.yml`, id 416806081), `CI/CD` (`ci-cd.yml`, id 411649003) |
 | GitHub environment | `Production` (used by the production job; no protection rules today) |
-| Legacy hosting | Deno Deploy project `kitsonkelly/bricks`, live at `https://bricks.kitsonkelly.deno.net` (the retired Fresh app). The `deployctl` workflow was retired in `07a9b3e`; Deno's own GitHub integration is still connected (check run `deploy/kitsonkelly/bricks`), but the Fresh tree it builds was deleted from this repository, so from that commit on its builds have no entrypoint and fail — the host keeps serving its last successful deployment until the project is deleted |
+| Legacy hosting | None. The Deno Deploy project `kitsonkelly/bricks` — host `https://bricks.kitsonkelly.deno.net`, which served the retired Fresh app — was deleted on 2026-11-13 and its GitHub integration disconnected, so no `deploy/kitsonkelly/bricks` check runs on new commits. Record: [`decommission.md`](decommission.md) |
 
 Set these for every command block below:
 
@@ -227,10 +226,9 @@ not start the cutover with an unchecked box.
 | 7 | Custom domain bound to the Worker | §4 verify snippet | `bricks.kitandsimon.com -> bayside-bricks` |
 | 8 | Registrar access works **before** it is needed | the read-only `sso-key` block in §6 step 5 | `ACTIVE` plus `danica`/`vicente` |
 | 9 | Rollback target identified | `cd ~/github/bayside-bricks && npx wrangler deployments list --name bayside-bricks` | previous good deployment + version id noted in the ticket |
-| 10 | Deno Deploy fallback confirmed, or its loss accepted | `curl -sS https://bricks.kitsonkelly.deno.net/ -o /dev/null -w '%{http_code}\n'` | `200` — the legacy Fresh app; see §8.4 if not |
-| 11 | `PRODUCTION_URL` decision made | `gh variable list --repo kitsonk/bayside-bricks` | unset before cutover; set as step 8 |
-| 12 | Simon briefed, change window agreed | — | written confirmation |
-| 13 | `CLOUDFLARE_API_TOKEN` has **DNS: Edit** for the window | `CLOUDFLARE_API_TOKEN=... npx wrangler whoami` | permission listed |
+| 10 | `PRODUCTION_URL` decision made | `gh variable list --repo kitsonk/bayside-bricks` | unset before cutover; set as step 8 |
+| 11 | Simon briefed, change window agreed | — | written confirmation |
+| 12 | `CLOUDFLARE_API_TOKEN` has **DNS: Edit** for the window | `CLOUDFLARE_API_TOKEN=... npx wrangler whoami` | permission listed |
 
 If any of 1–7 fails, stop: the cutover is not the problem, the deployment is.
 
@@ -265,18 +263,21 @@ node scripts/smoke.mjs https://bayside-bricks.me-6d3.workers.dev --images
 Record the deployment id and commit in the ticket. Expected today:
 `bf24917a-…`, version `48480db8-…`, commit `2b85425…`.
 
-### Step 2 — confirm the fallback exists (or accept its loss)
+### Step 2 — fallback check (historical; the fallback is gone)
+
+At the cutover the legacy host answered `200` with
+`<title>Bayside Brickstore</title>`, so the window had a cross-platform
+fallback. That host was the retired Fresh app built by Deno's GitHub
+integration — a different codebase from this one — and the whole Deno project
+was **deleted on 2026-11-13** ([`decommission.md`](decommission.md)). The check
+cannot be repeated, and a future cutover would have no such net: plan on the
+Worker (workers.dev plus the custom domain) being the only production.
+
+Recorded for the audit trail only:
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitsonkelly.deno.net/
-curl -sS https://bricks.kitsonkelly.deno.net/ | grep -o '<title>[^<]*</title>'
+curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitsonkelly.deno.net/   # now 404
 ```
-
-Expect `200` and `<title>Bayside Brickstore</title>`. That host is the retired
-Fresh app, still built by Deno's GitHub integration from the last commit that
-contained it — it is a different codebase from this app, so it is a working
-fallback, not a warm standby of the same build. If it is not `200`, §8.4 is a
-rebuild rather than a rollback: decide that consciously before proceeding.
 
 ### Step 3 — confirm the zone and its records
 
@@ -455,12 +456,10 @@ flowchart TD
   B -->|No, only workers.dev / a preview| C[R1 version rollback]
   B -->|Yes| D{Is DNS/TLS the problem?}
   D -->|No, app error| C
-  D -->|Yes, certificate or hostname broken| E[R3 detach custom domain / restore record]
-  D -->|Yes, need Deno back now| F[R4 repoint to Deno Deploy]
+  D -->|Yes, certificate or hostname broken| E[R3 re-attach the custom domain]
   C --> G[Verify with smoke]
   E --> G
-  F --> G
-  G -->|still bad| H[R5 zone records / R6 recreate Worker]
+  G -->|still bad| H[R4 zone records / R5 recreate Worker]
 ```
 
 ### R1 — bad Worker release (fastest, least risky)
@@ -542,61 +541,7 @@ in the first minutes after activation is normal. If it persists, check
 **Do not** detach on a hunch during the first ten minutes of a cutover — DNS and
 certificate propagation look exactly like breakage.
 
-### R4 — repoint `bricks` back to Deno Deploy
-
-Only valid while the Deno deployment still exists. Precheck first:
-
-```bash
-curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitsonkelly.deno.net/   # expect 200
-curl -sS https://bricks.kitsonkelly.deno.net/ | grep -o '<title>[^<]*</title>'    # <title>Bayside Brickstore</title>
-```
-
-That host is the retired Fresh app, still built by Deno's GitHub
-integration from the last commit that contained it (`deploy/kitsonkelly/bricks`).
-It is a different codebase from this app, so what comes back is the
-pre-migration site.
-If it is not `200`, the legacy site is gone: this is a rebuild (R6), not a
-rollback, and the Worker is the only production you have.
-
-```bash
-# 1. stop deploys, so the next push cannot re-attach the Worker route
-gh workflow disable "CI/CD" --repo kitsonk/bayside-bricks
-
-# 2. detach the Worker custom domain (frees the name and deletes its managed record)
-curl -sS -X DELETE -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains/$CF_DOMAIN_ID"
-
-# 3. point bricks at Deno Deploy: alias.deno.net is the shared Deno edge target
-#    (it resolves to the same address as bricks.kitsonkelly.deno.net)
-curl -sS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-  -H 'content-type: application/json' \
-  "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records" \
-  --data '{"type":"CNAME","name":"bricks","content":"alias.deno.net","proxied":true,"ttl":1}'
-
-# 4. read back, and prove which platform answers
-dig +short bricks.kitandsimon.com @1.1.1.1
-curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitandsimon.com/health   # 404 — the Worker answers 200 here
-curl -sSI https://bricks.kitandsimon.com/ | grep -ci '^x-fresh-uuid:'             # 1 — the Fresh app
-```
-
-`server:` is `cloudflare` either way (the zone is proxied), so the discriminators
-are `/health` and `x-fresh-uuid`, not the server header. Propagation is a DNS TTL
-away, a few minutes at most.
-
-Two traps:
-
-- **The Deno project must still own the custom domain.** The CNAME only routes
-  traffic to Deno's edge; Deno decides what to serve by the `Host` header. If the
-  project's domain list no longer contains `bricks.kitandsimon.com`, the edge
-  answers 404 regardless of the record. Re-add it in the Deno Deploy project
-  (Settings → Domains) and retry.
-- **Do not re-enable `CI/CD` while the CNAME points at Deno.** `routes` in
-  `wrangler.jsonc` re-attaches the custom domain on the next production
-  deploy, which takes the hostname back and conflicts with the CNAME. Either
-  keep the workflow disabled, or land a hotfix branch that drops `routes` (and
-  sets `workers_dev: true`) before re-enabling it.
-
-### R5 — whole-zone problem (mail or apex broken after activation)
+### R4 — whole-zone problem (mail or apex broken after activation)
 
 Fix records **in Cloudflare**. Do not move the delegation back to GoDaddy:
 GoDaddy holds no zone file for this domain (the API answers `UNKNOWN_DOMAIN`),
@@ -615,7 +560,7 @@ critical ones: `aspmx.l.google.com` priority 1, `alt1`/`alt2` priority 5,
 `alt3`/`alt4` priority 10, `v=spf1 include:_spf.google.com ~all`). Verify with
 `dig MX` and a mail round trip. Only `bricks` is ours; leave the rest as found.
 
-### R6 — recreate the Worker (last resort)
+### R5 — recreate the Worker (last resort)
 
 ```bash
 cd ~/github/bayside-bricks && npm ci && npm run build
@@ -637,7 +582,7 @@ delete, so prefer R1/R2 unless the script itself is unrecoverable.
    rollback` with the pipeline still enabled lasts only until the next push.
 4. Add a regression check to `scripts/smoke.mjs` if the failure was
    user-visible; that suite is the only runtime gate.
-5. Re-enable anything disabled in R2/R4, and re-run the production job to prove
+5. Re-enable anything disabled in R2, and re-run the production job to prove
    it is green from a clean state.
 
 ## 9. Known gaps
@@ -656,12 +601,9 @@ delete, so prefer R1/R2 unless the script itself is unrecoverable.
   in §4 was read on 2026-11-13 with a DNS-capable token. The externally visible
   records — apex `A`, `www`, five MX, SPF, `bricks` — are re-verified with `dig`
   in §7 and need no credential.
-- **Deno Deploy is a fallback, not a mirror.** `bricks.kitsonkelly.deno.net`
-  serves the retired Fresh app from its last successful build. It is not the
-  Astro build and does not track this app; with the Fresh tree deleted from the
-  repository, Deno's integration can no longer rebuild it. It is also
-  scheduled for deletion ([`decommission.md`](decommission.md)) — once the
-  project is gone, R4 goes with it and R1/R6 are the whole rollback tree.
+- **No cross-platform fallback.** Deno Deploy was deleted on 2026-11-13
+  ([`decommission.md`](decommission.md)); Worker versions (R1) plus workers.dev
+  and the routes declared in `wrangler.jsonc` are the whole rollback surface.
 - **Versions accumulate**: every PR push uploads a version and nothing prunes
   them (`wrangler` has no `versions delete`). Old versions are inert; delete them
   in the dashboard or with a Workers Scripts: Edit token if the list gets noisy.
@@ -674,6 +616,7 @@ delete, so prefer R1/R2 unless the script itself is unrecoverable.
 
 | Date | Change |
 | --- | --- |
+| 2026-11-13 | Deno Deploy decommissioned: the `bayside-bricks` project was deleted (the `*.deno.net` host now answers 404) and Deno's GitHub integration disconnected. Rollback R4 (repoint `bricks` at Deno Deploy) is retired, the former R5/R6 are now R4/R5, and the fallback text in `docs/deploy.md` is gone. Record: [`decommission.md`](decommission.md) |
 | 2026-11-13 | Production verification passed: 63/63 checks on `bricks.kitandsimon.com` (routes, assets, SEO contract, frame contract, asset sha256, legacy text/class parity), 21/21 smoke, pixel-identical rendering, and a five-minute `wrangler tail` soak with zero exceptions. Evidence: [`verification-2026-11-13.md`](verification-2026-11-13.md); Deno Deploy deletion scheduled in [`decommission.md`](decommission.md) |
 | 2026-11-13 | Cutover completed and verified: `PRODUCTION_URL` set (`04:47Z`); first run with it set exposed the edge-dependent `robots.txt` rendering, fixed so any 2xx on that path is a SKIP; apex expectation in §7 corrected (DNS-only to the GoDaddy origin). Evidence: [`cutover-2026-11-13.md`](cutover-2026-11-13.md) |
 | 2026-11-13 | Runbook written; zone activated and cutover executed (`04:15:46Z`); smoke suite corrected to report Cloudflare's managed `robots.txt` as SKIP on the custom domain as well as workers.dev |

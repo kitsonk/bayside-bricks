@@ -1,19 +1,17 @@
 # Decommissioning the legacy Deno Deploy project
 
-**Status: decommissioned in part; the project deletion is scheduled and
-human-gated.** `bricks.kitandsimon.com` has been served by the Cloudflare Worker
-`bayside-bricks` since 2026-11-13T04:22:26Z, and nothing in DNS or CI points at
-Deno Deploy any more. The Deno Deploy application itself still exists at
-`https://bricks.kitsonkelly.deno.net` and can only be deleted from the Deno
-console by a signed-in human — the CLI cannot be used unattended (see *Why this
-last step needs a person*).
+**Status: fully decommissioned (2026-11-13).** `bricks.kitandsimon.com` has been
+served by the Cloudflare Worker `bayside-bricks` since 2026-11-13T04:22:26Z (§1),
+the Deno Deploy application `kitsonkelly/bricks` has been deleted, and Deno's
+GitHub integration is disconnected. `https://bricks.kitsonkelly.deno.net` answers
+404 and nothing in DNS, CI or GitHub points at Deno any more. No console step and
+no follow-up change remains.
 
-Recorded 2026-11-13 during the verification card (t_bc7cf085); evidence in
-[`verification-2026-11-13.md`](verification-2026-11-13.md) and
-[`cutover-2026-11-13.md`](cutover-2026-11-13.md). The remaining console step is
-tracked on the board as **t_dc0f01cb**. The repository restructure that made the
-retired Fresh tree archivable — the `web/` → root promotion and deletion of the
-legacy app — is complete (**t_773ee38d**).
+Recorded 2026-11-13 during the verification card (t_bc7cf085) and closed on
+t_dc0f01cb; evidence in [`verification-2026-11-13.md`](verification-2026-11-13.md)
+and [`cutover-2026-11-13.md`](cutover-2026-11-13.md). The repository restructure
+that archived the retired Fresh tree — the `web/` → root promotion and deletion of
+the legacy app — is complete (**t_773ee38d**).
 
 ## 1. Done
 
@@ -26,23 +24,19 @@ legacy app — is complete (**t_773ee38d**).
 | No runtime dependency on Deno | the app has zero `Deno.*`, `deno.land`, `jsr:` or `fresh` imports; it reads no env vars (inventory §7) |
 | Deno-only external hotlinks gone | the BrickLink CDN script is vendored and byte-identical (`sha256 b40175f3…`); the 7 photos are self-hosted under `/img/` |
 
-## 2. Remaining — scheduled
+## 2. The last step — done 2026-11-13
 
-| Item | Owner | How |
-| --- | --- | --- |
-| Delete the Deno Deploy application `bayside-bricks` | Kit | Deno console → app → delete (steps below) |
-| Disconnect Deno's GitHub integration from `kitsonk/bayside-bricks` | Kit | GitHub → Settings → Applications → deno deploy → Configure → remove this repository. **Confirmed still connected** on 2026-11-13: PR #14 carried a `deploy/kitsonkelly/bricks` check, which reported *Build succeeded*, so Deno was still building this repository on every push. The Fresh tree is now deleted (t_773ee38d), so those builds fail on `main` until the integration is removed — the deployment keeps serving its last successful build, and the red check is not a regression in this repo. |
-| After deletion: retire rollback R4 and the fallback paragraphs | next repo change | `docs/ci-cd.md` §8 R4 and `docs/deploy.md` §0/§5 currently treat Deno Deploy as a rollback target. Tracked as t_dc0f01cb. |
+| Item | Evidence (2026-11-13) |
+| --- | --- |
+| Deno Deploy application `kitsonkelly/bricks` deleted | `curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitsonkelly.deno.net/` → `404` (it was `200` while the Fresh app was live) |
+| Deno's GitHub integration disconnected from `kitsonk/bayside-bricks` | no `deploy/kitsonkelly/bricks` status is created on the commits of the change that landed this document. The red `deploy/…` status still visible on older commits (`f705ff7` and before) is a build from 05:46:04Z, taken before the disconnection; those statuses are historical and will not be re-created |
+| The public host is still the Worker | `curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitandsimon.com/` → `200` |
+| Rollback R4 retired in the repository | `docs/ci-cd.md` §8 no longer contains an R4 (the former R5/R6 are renumbered R4/R5), and `docs/deploy.md` §0/§5 no longer describe a Deno fallback |
 
-Until the deletion happens, **R4 (repoint `bricks` at Deno Deploy) is still
-valid** — the project, its last deployment and its GitHub integration are
-untouched. It stops being valid the moment the project is deleted. Note that
-`https://bricks.kitsonkelly.deno.net` serves the *legacy Fresh app* (retired from
-this repository, last built from the commit before the restructure), not the
-Astro build: it is a "restore service on the old app" fallback, not a rollback of
-the current codebase.
-
-### Why this last step needs a person
+Both console actions — deleting the application and removing the GitHub App's
+access to this repository — were performed by Kit, signed in, in the Deno and
+GitHub consoles. Deletion is irreversible, and the CLI cannot be used
+unattended, which is why it was never automated:
 
 `deno deploy` has no `apps delete` subcommand (verified: `deno deploy apps` →
 `list`, `get` only), so removal is a console action. Every automated path needs
@@ -57,18 +51,15 @@ machine:
   page is behind GitHub/Google OAuth plus a Cloudflare Turnstile human check —
   not something an unattended run should satisfy on Kit's behalf.
 
-Deleting a live project is also irreversible, which is why it sits behind the
-human gate rather than being worked around.
-
-### Steps (about two minutes)
+### Steps as executed (about two minutes)
 
 1. Sign in at <https://console.deno.com> with the account that owns the app.
 2. Open the `bayside-bricks` application, then its settings, and delete it.
    Deleting the app removes its `*.deno.net` hostname and any custom domain
    still attached to it in Deno's console.
 3. GitHub → **Settings → Applications → deno deploy → Configure** → remove
-   `kitsonk/bayside-bricks`. This stops Deno building the (now retired) Fresh app
-   on every push to `main`.
+   `kitsonk/bayside-bricks`. This stops Deno building the retired Fresh app on
+   every push to `main`.
 4. Verify the removal:
 
    ```bash
@@ -76,24 +67,38 @@ human gate rather than being worked around.
    curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitandsimon.com/          # still 200 — the Worker
    ```
 
-5. Land the follow-up repo change: delete R4 from `docs/ci-cd.md` §8, drop the
-   fallback text from `docs/deploy.md`, and mark this file's §2 done.
+5. The follow-up repository change (this document): R4 deleted from
+   `docs/ci-cd.md` §8, the fallback text dropped from `docs/deploy.md`, and §2
+   above marked done.
 
-### Deadline that does not depend on us
+### What R4 actually was
 
-The Deno console carries a banner: *"Deno Deploy is shutting down in April 2027.
-Your existing applications keep running until then."* Deleting the project now
-avoids inheriting that deadline, but there is no scenario in which the app needs
-to outlive it.
+`https://bricks.kitsonkelly.deno.net` served the **legacy Fresh app at the
+repository root**, built by Deno's GitHub integration from the last commit that
+contained it — not the Astro build that runs on the Worker. R4 ("repoint
+`bricks` at Deno Deploy") was therefore a *restore the old app* fallback, not a
+rollback of the current codebase: it brought back the pre-migration site, with
+its own markup and content, not the deployed version of this repository. It was
+retired with the project. A rollback of the current app is a Worker version
+rollback (`docs/ci-cd.md` R1) or a redeploy (R5); no document should describe R4
+as a rollback of the current codebase.
+
+### Deadline that no longer applies
+
+The Deno console banner — *"Deno Deploy is shutting down in April 2027. Your
+existing applications keep running until then."* — no longer constrains
+anything: the project is gone ahead of it.
 
 ## 3. What was deliberately *not* touched
 
-- No DNS record was edited for this card: `bricks` is Cloudflare-managed for the
-  Worker binding and already resolves only to Cloudflare.
-- The legacy Fresh source at the repository root was left in place by this card
-  as the porting reference (`routes/`, `islands/`, `components/`, `static/`,
-  `deno.json`, `main.ts`, `dev.ts`, `fresh.*`). It has since been retired and
-  deleted (t_773ee38d, migration inventory §11.2 *archive the Fresh branch*); the
-  deletion commit is the archive, and git history preserves the tree. The Deno
-  project keeps its last successful build until the GitHub integration is
-  disconnected and the project deleted.
+- No DNS record was edited by the decommissioning cards: `bricks` is
+  Cloudflare-managed for the Worker binding and already resolves only to
+  Cloudflare.
+- The legacy Fresh source at the repository root was left in place by the
+  verification card as the porting reference (`routes/`, `islands/`,
+  `components/`, `static/`, `deno.json`, `main.ts`, `dev.ts`, `fresh.*`). It has
+  since been retired and deleted (t_773ee38d, migration inventory §11.2 *archive
+  the Fresh branch*); the deletion commit is the archive, and git history
+  preserves the tree. The Deno project served its last successful build until
+  the GitHub integration was disconnected and the project deleted on
+  2026-11-13.
