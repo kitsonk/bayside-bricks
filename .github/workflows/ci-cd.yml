@@ -45,6 +45,11 @@ defaults:
     # The Astro/Workers app lives in web/ until the scaffold is promoted to the
     # repository root (tracked by t_bc7cf085). Keep every path relative to it.
     working-directory: web
+    # Required, not cosmetic: the deploy steps pipe wrangler's output into `tee`
+    # to scrape the deployed URL. GitHub's default shell is `bash -e {0}`, which
+    # has no `pipefail`, so the pipeline would exit with `tee`'s status (0) and a
+    # failed deploy would report success. Explicit `bash` runs with `-eo pipefail`.
+    shell: bash
 
 jobs:
   # Deploying needs Cloudflare credentials. Rather than fail red on a repo
