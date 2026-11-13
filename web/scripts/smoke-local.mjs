@@ -62,11 +62,23 @@ server.on("exit", (code, signal) => {
 
 function shutdown(code) {
   shuttingDown = true;
+  // Set the code up front: if the event loop drains before the timers below
+  // run, Node exits "naturally" with whatever `process.exitCode` holds.
+  process.exitCode = code;
+  if (exited) process.exit(code);
   if (!exited) server.kill("SIGTERM");
-  setTimeout(() => {
+  // Deliberately NOT unref'd. An unref'd timer does not keep the event loop
+  // alive, so Node could drain and exit 0 before `process.exit(code)` ran —
+  // that turned a failing smoke suite into a green `npm test`. The timer is a
+  // 2s backstop only; the common path is the `exit` listener below.
+  const force = setTimeout(() => {
     if (!exited) server.kill("SIGKILL");
     process.exit(code);
-  }, 2000).unref();
+  }, 2000);
+  server.once("exit", () => {
+    clearTimeout(force);
+    process.exit(code);
+  });
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

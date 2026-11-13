@@ -42,6 +42,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# `shell: bash` is not cosmetic: GitHub's default `run:` shell is `bash -e {0}`,
+# and several steps pipe into `tee` to capture their logs. Without `pipefail` the
+# pipeline's exit status is `tee`'s — always 0 — so a red build or failing test
+# would report green and the failure artefact below would never upload.
+# The explicitly-requested `bash` shell is invoked as `bash --noprofile --norc
+# -eo pipefail {0}`.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   verify:
     name: Install, build and test
