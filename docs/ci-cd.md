@@ -14,6 +14,7 @@ the *do this now* half.
 - Pipelines: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (verify),
   [`.github/workflows/ci-cd.yml`](../.github/workflows/ci-cd.yml) (preview + production)
 - Last verified against production: 2026-11-13, commit `2b85425`
+  (deployment `bf24917a-d78d-4bbf-a4c4-d42b8e3ec9db`, version `48480db8`)
 
 ```mermaid
 flowchart TD
@@ -34,9 +35,9 @@ flowchart TD
 | --- | --- | --- | --- |
 | Repository, Actions secrets and variables, workflow disable | Kitson Kelly | admin on `kitsonk/bayside-bricks` | `gh` CLI already authenticated as `kitsonk` |
 | Cloudflare account (Worker, zone, custom domain) | Kitson Kelly | Super Administrator, or a scoped API token (§3.2) | `wrangler login` OAuth session on the operator's machine; 1Password item **Cloudflare** for the dashboard (password + TOTP) |
-| Registrar `kitandsimon.com` (GoDaddy) | Kitson Kelly | domain ownership; API key for scripted changes | 1Password item **Godaddy**, field `API Key and secret` (`key:secret`) |
+| Registrar `kitandsimon.com` (GoDaddy) | Kitson Kelly | domain ownership; API key for scripted changes | 1Password item **Godaddy**, field `API Key and secret` (key and secret on two lines — §6 step 5) |
 | BrickLink storefront, embed sign-off, business acceptance | Simon | BrickLink store admin | — |
-| Deno Deploy project `bayside-bricks` (legacy, rollback only) | Kitson Kelly | Deno Deploy dashboard access | **not stored locally** — see §8.4 |
+| Deno Deploy project `kitsonkelly/bricks` (legacy, live fallback) | Kitson Kelly | Deno Deploy dashboard access | **not stored locally** — see §8.4 |
 
 Rules of engagement:
 
@@ -62,7 +63,7 @@ Rules of engagement:
 | Registrar | GoDaddy, status `ACTIVE`, delegating to the pair above |
 | Workflows | `CI` (`ci.yml`, id 416806081), `CI/CD` (`ci-cd.yml`, id 411649003) |
 | GitHub environment | `Production` (used by the production job; no protection rules today) |
-| Legacy hosting | Deno Deploy project `bayside-bricks`, `deployctl` workflow retired in `07a9b3e` |
+| Legacy hosting | Deno Deploy project `kitsonkelly/bricks`, live at `https://bricks.kitsonkelly.deno.net` (the Fresh app at the repo root). The `deployctl` workflow was retired in `07a9b3e`, but Deno's own GitHub integration still builds that app on every push to `main` (check run `deploy/kitsonkelly/bricks`), so the fallback stays warm |
 
 Set these for every command block below:
 
@@ -152,9 +153,11 @@ gh variable set PRODUCTION_URL --repo kitsonk/bayside-bricks \
   --body https://bricks.kitandsimon.com
 ```
 
-Unset (today) the post-deploy smoke only proves the workers.dev host, which is
-the same build but not the public hostname. Set it as the last step of a cutover
-(§6, step 8) — not before, or a deploy during the flip proves the wrong site.
+Unset as of 2026-11-13 (verified with `gh variable list`), the post-deploy smoke
+only proves the workers.dev host, which is the same build but not the public
+hostname. Set it as the last step of a cutover (§6, step 8) — not before, or a
+deploy during the flip proves the wrong site. This is the one cutover step still
+outstanding.
 
 ### 3.5 Kill switch
 
@@ -200,7 +203,8 @@ curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
 # bricks.kitandsimon.com -> bayside-bricks  id=775a47a8...
 ```
 
-Zone contents (12 records, rebuilt 2026-11-13): five Google Workspace MX, SPF
+Zone contents (12 records, rebuilt 2026-11-13; the count needs a DNS-capable
+token — see §9): five Google Workspace MX, SPF
 TXT, apex `A 160.153.0.160` (the legacy WordPress blog, proxied), `www` CNAME to
 the apex, four Google Workspace CNAMEs (`mail`, `calendar`, `drive`, `groups`)
 and the `bricks` record managed by the custom-domain binding. **Only `bricks`
@@ -221,9 +225,9 @@ not start the cutover with an unchecked box.
 | 5 | Zone exists and nameservers are assigned | `curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID" \| jq '.result \| {status, name_servers}'` | `pending`, `danica`/`vicente` (or `active` if already cut over) |
 | 6 | Zone records complete (12) | Cloudflare dashboard → `kitandsimon.com` → DNS, or §4 | MX ×5, SPF, apex A, www, 4 Google CNAMEs, `bricks` |
 | 7 | Custom domain bound to the Worker | §4 verify snippet | `bricks.kitandsimon.com -> bayside-bricks` |
-| 8 | Registrar access works **before** it is needed | `op item get Godaddy --fields 'API Key and secret' >/dev/null && echo ok` | `ok` |
+| 8 | Registrar access works **before** it is needed | the read-only `sso-key` block in §6 step 5 | `ACTIVE` plus `danica`/`vicente` |
 | 9 | Rollback target identified | `cd web && npx wrangler deployments list --name bayside-bricks` | previous good deployment + version id noted in the ticket |
-| 10 | Deno Deploy fallback confirmed, or its loss accepted | `curl -sS -o /dev/null -w '%{http_code}\n' https://bayside-bricks.deno.dev/` | `200` if the fallback exists; see §8.4 if not |
+| 10 | Deno Deploy fallback confirmed, or its loss accepted | `curl -sS https://bricks.kitsonkelly.deno.net/ -o /dev/null -w '%{http_code}\n'` | `200` — the legacy Fresh app; see §8.4 if not |
 | 11 | `PRODUCTION_URL` decision made | `gh variable list --repo kitsonk/bayside-bricks` | unset before cutover; set as step 8 |
 | 12 | Simon briefed, change window agreed | — | written confirmation |
 | 13 | `CLOUDFLARE_API_TOKEN` has **DNS: Edit** for the window | `CLOUDFLARE_API_TOKEN=... npx wrangler whoami` | permission listed |
@@ -238,8 +242,10 @@ declared in `wrangler.jsonc`, so there is no dashboard work and nothing to hand
 edit — the point of the design is that the binding cannot drift.
 
 **Current state (2026-11-13): already executed.** The zone activated at
-`04:15:46Z` and production has been served by the Worker since `04:22:26Z`. Keep
-this section for a re-cutover after a rollback, or to verify what was done.
+`04:15:46Z` (GoDaddy moved from `alice`/`bob` to `danica`/`vicente`) and
+production has been served by the Worker since the `04:22:26Z` deployment. Step 8
+(`PRODUCTION_URL`) was not done and is the one outstanding item. Keep this
+section for a re-cutover after a rollback, or to verify what was done.
 
 ### Step 0 — freeze and announce
 
@@ -262,12 +268,15 @@ Record the deployment id and commit in the ticket. Expected today:
 ### Step 2 — confirm the fallback exists (or accept its loss)
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' https://bayside-bricks.deno.dev/
+curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitsonkelly.deno.net/
+curl -sS https://bricks.kitsonkelly.deno.net/ | grep -o '<title>[^<]*</title>'
 ```
 
-If this is not `200`, there is no instant Deno fallback and §8.4 is a rebuild,
-not a rollback. Decide that consciously before proceeding; the 2026-11-13
-cutover went ahead with the fallback already unreachable.
+Expect `200` and `<title>Bayside Brickstore</title>`. That host is the Fresh app
+at the repository root, still built by Deno's GitHub integration on every push to
+`main` — it is a different codebase from `web/`, so it is a working fallback, not
+a warm standby of the same build. If it is not `200`, §8.4 is a rebuild rather
+than a rollback: decide that consciously before proceeding.
 
 ### Step 3 — confirm the zone and its records
 
@@ -290,8 +299,9 @@ npm ci && npm run build
 npx wrangler deploy -c dist/server/wrangler.json --message "cutover $(git rev-parse --short HEAD)"
 ```
 
-Then run the binding check from §4. This works while the zone is `pending` — the
-hostname simply does not resolve until step 5.
+Then run the binding check from §4. This works whether or not the zone is active:
+while `pending` the hostname simply does not resolve until step 5 (today the zone
+is `active`, so it serves as soon as the deploy finishes).
 
 ### Step 5 — flip the nameservers at GoDaddy
 
@@ -303,24 +313,38 @@ danica.ns.cloudflare.com
 vicente.ns.cloudflare.com
 ```
 
-Scripted (same credential that produced the current NS pair, so it is known to
-work; GoDaddy returns `200` with an empty body):
+Scripted. The 1Password item **Godaddy**, field `API Key and secret`, holds the
+key and the secret on two separate lines — *not* as the `key:secret` pair the
+GoDaddy dashboard displays. Set `GD_AUTH` once and reuse it for the write and the
+read-back; GoDaddy answers the `PATCH` with `200` and an empty body.
 
 ```bash
-GD="$(op item get Godaddy --fields 'API Key and secret')"
+GD="$(op item get Godaddy --fields 'label=API Key and secret' --reveal | tr -d '"')"
+GD_KEY="$(printf '%s' "$GD" | sed -n 1p)"
+GD_SECRET="$(printf '%s' "$GD" | sed -n 2p)"
+GD_AUTH="sso-key ${GD_KEY}:${GD_SECRET}"
+
+# 0. prove the credential before changing anything (expect ACTIVE + both NS)
+curl -sS "https://api.godaddy.com/v1/domains/kitandsimon.com" \
+  -H "Authorization: $GD_AUTH" -H 'Accept: application/json' \
+  | jq -r '.status, (.nameServers[])'
+
+# 1. write the nameservers
 curl -sS -o /dev/null -w '%{http_code}\n' -X PATCH \
   "https://api.godaddy.com/v1/domains/kitandsimon.com" \
-  -H "Authorization: sso-key ${GD%%:*}:${GD##*:}" \
+  -H "Authorization: $GD_AUTH" \
   -H 'Content-Type: application/json' \
   --data '{"nameServers":["danica.ns.cloudflare.com","vicente.ns.cloudflare.com"]}'
 
-# read it back immediately — never trust the write alone
+# 2. read it back immediately — never trust the write alone
 curl -sS "https://api.godaddy.com/v1/domains/kitandsimon.com" \
-  -H "Authorization: sso-key ${GD%%:*}:${GD##*:}" | jq -r '.nameServers[]'
+  -H "Authorization: $GD_AUTH" -H 'Accept: application/json' \
+  | jq -r '.nameServers[]'
 ```
 
-If the read-back does not show both nameservers, stop and fix that before
-verifying anything else.
+If step 0 does not print `ACTIVE`, stop — the PATCH will not work either. If the
+read-back does not show both nameservers, stop and fix that before verifying
+anything else.
 
 ### Step 6 — wait for activation
 
@@ -366,17 +390,47 @@ The run must be green, and its summary must show a smoke of
 | Health | `curl -sS https://bricks.kitandsimon.com/health` | `{"status":"ok",...}` |
 | 404 parity | `curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitandsimon.com/nonexistent` | `404` |
 | No frame blocking | `curl -sSI https://bricks.kitandsimon.com/ \| grep -i 'x-frame-options\|frame-ancestors'` | no output (the page is iframed by BrickLink) |
-| Full route-table suite | `cd web && node scripts/smoke.mjs https://bricks.kitandsimon.com --images` | `21/21 checks passed, 1 skipped` |
+| Full route-table suite, Worker host | `cd web && node scripts/smoke.mjs https://bayside-bricks.me-6d3.workers.dev --images` | `21/21 checks passed, 1 skipped` |
+| Full route-table suite, public host | `cd web && node scripts/smoke.mjs https://bricks.kitandsimon.com --images` | same counts — **only from a resolver that answers for `bricks`** (§7.1) |
 | Previews unaffected | open a throwaway PR, watch `CI/CD` | preview job green, sticky comment, production deployment id unchanged |
 | Mail round trip | send to and from a `@kitandsimon.com` address | delivered both ways |
 
-Notes that will otherwise waste an hour:
+### 7.1 When the local resolver lies
 
-- **Use a public resolver.** The A2B corporate resolver on this machine still
-  served the pre-cutover delegation (`alice`/`bob.ns.cloudflare.com`) hours after
-  the flip, so `curl` failed with "could not resolve host" while `dig @1.1.1.1`
-  was correct. Verify from `1.1.1.1`/`8.8.8.8` or a non-corporate network, or
-  pin the path: `curl --resolve "bricks.kitandsimon.com:443:$(dig +short bricks.kitandsimon.com @1.1.1.1 | head -1)" https://bricks.kitandsimon.com/`.
+The A2B corporate resolver on this machine answers no-answer/NXDOMAIN for
+`bricks.kitandsimon.com` long after the cutover, while the zone's apex and every
+other name under it resolve normally. `curl` and `node scripts/smoke.mjs` then
+fail with "could not resolve host" / "fetch failed" against a deployment that is
+perfectly healthy. Check which resolver you are on before believing a failure:
+
+```bash
+dig +short bricks.kitandsimon.com            # corporate resolver — may be empty
+dig +short bricks.kitandsimon.com @1.1.1.1   # truth: two Cloudflare anycast IPs
+```
+
+If those disagree, pin the path where the tool supports it. `curl` does; the
+smoke suite does not (it uses the OS resolver), so run the suite against the
+workers.dev host — same build, same Worker — and prove the public hostname with
+this battery. Every line was run on 2026-11-13 with the resolver broken:
+
+```bash
+IP=$(dig +short bricks.kitandsimon.com @1.1.1.1 | head -1)
+R="--resolve bricks.kitandsimon.com:443:$IP"
+
+curl -sS $R -o /dev/null -w '%{http_code} %{content_type}\n' https://bricks.kitandsimon.com/                   # 200 text/html
+curl -sS $R -o /dev/null -w '%{http_code} %{content_type}\n' https://bricks.kitandsimon.com/health             # 200 application/json
+curl -sS $R -o /dev/null -w '%{http_code}\n'                  https://bricks.kitandsimon.com/nonexistent        # 404
+curl -sS $R -o /dev/null -w '%{http_code} %{content_type}\n' https://bricks.kitandsimon.com/styles.css         # 200 text/css
+curl -sS $R -o /dev/null -w '%{http_code} %{content_type}\n' https://bricks.kitandsimon.com/logo.svg           # 200 image/svg+xml
+curl -sS $R -o /dev/null -w '%{http_code} %{content_type}\n' https://bricks.kitandsimon.com/img/1035859.JPG    # 200 image/jpeg
+curl -sS $R -D - -o /dev/null https://bricks.kitandsimon.com/ | grep -ci 'x-fresh-uuid'                        # 0 — the Worker, not Deno
+```
+
+The last line is the one that answers "which platform am I actually talking to":
+the legacy Fresh app sets `x-fresh-uuid` on every response, the Worker never does.
+
+### 7.2 Notes that will otherwise waste an hour
+
 - **The robots.txt check reports SKIP, not PASS.** Cloudflare serves its managed
   `robots.txt` (content-signal directives) on every host it fronts — workers.dev
   *and* the proxied custom domain — before the request reaches the Worker. The
@@ -487,13 +541,17 @@ certificate propagation look exactly like breakage.
 
 ### R4 — repoint `bricks` back to Deno Deploy
 
-Only valid if the Deno deployment still exists. Precheck first:
+Only valid while the Deno deployment still exists. Precheck first:
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' https://bayside-bricks.deno.dev/   # expect 200
+curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitsonkelly.deno.net/   # expect 200
+curl -sS https://bricks.kitsonkelly.deno.net/ | grep -o '<title>[^<]*</title>'    # <title>Bayside Brickstore</title>
 ```
 
-If that is not `200`, the legacy site is gone: this is a rebuild (§8.6), not a
+That host is the Fresh app at the repository root, still built by Deno's GitHub
+integration on every push to `main` (`deploy/kitsonkelly/bricks`). It is a
+different codebase from `web/`, so what comes back is the pre-migration site.
+If it is not `200`, the legacy site is gone: this is a rebuild (R6), not a
 rollback, and the Worker is the only production you have.
 
 ```bash
@@ -504,25 +562,35 @@ gh workflow disable "CI/CD" --repo kitsonk/bayside-bricks
 curl -sS -X DELETE -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains/$CF_DOMAIN_ID"
 
-# 3. point bricks at Deno Deploy — use the target shown in the Deno Deploy project;
-#    alias.deno.net is the historical value
+# 3. point bricks at Deno Deploy: alias.deno.net is the shared Deno edge target
+#    (it resolves to the same address as bricks.kitsonkelly.deno.net)
 curl -sS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   -H 'content-type: application/json' \
   "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records" \
   --data '{"type":"CNAME","name":"bricks","content":"alias.deno.net","proxied":true,"ttl":1}'
 
-# 4. read back
+# 4. read back, and prove which platform answers
 dig +short bricks.kitandsimon.com @1.1.1.1
-curl -sSI https://bricks.kitandsimon.com/ | grep -i '^server:\|^x-fresh-uuid:'
+curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitandsimon.com/health   # 404 — the Worker answers 200 here
+curl -sSI https://bricks.kitandsimon.com/ | grep -ci '^x-fresh-uuid:'             # 1 — the Fresh app
 ```
 
-Success is `server: cloudflare` **plus** the legacy site's own markers (the Deno
-build answers with `x-fresh-uuid`; the Worker does not). Propagation is a DNS TTL
+`server:` is `cloudflare` either way (the zone is proxied), so the discriminators
+are `/health` and `x-fresh-uuid`, not the server header. Propagation is a DNS TTL
 away, a few minutes at most.
 
-Step 3 needs **DNS: Edit**; the wrangler OAuth session cannot do it (§3.2). If
-you do not hold a DNS-capable token, do it in the dashboard: *kitandsimon.com →
-DNS → Add record → CNAME `bricks` → target above → Proxied*.
+Two traps:
+
+- **The Deno project must still own the custom domain.** The CNAME only routes
+  traffic to Deno's edge; Deno decides what to serve by the `Host` header. If the
+  project's domain list no longer contains `bricks.kitandsimon.com`, the edge
+  answers 404 regardless of the record. Re-add it in the Deno Deploy project
+  (Settings → Domains) and retry.
+- **Do not re-enable `CI/CD` while the CNAME points at Deno.** `routes` in
+  `web/wrangler.jsonc` re-attaches the custom domain on the next production
+  deploy, which takes the hostname back and conflicts with the CNAME. Either
+  keep the workflow disabled, or land a hotfix branch that drops `routes` (and
+  sets `workers_dev: true`) before re-enabling it.
 
 ### R5 — whole-zone problem (mail or apex broken after activation)
 
@@ -570,17 +638,23 @@ delete, so prefer R1/R2 unless the script itself is unrecoverable.
 
 ## 9. Known gaps
 
-- **`bricks.kitandsimon.com` is live on the Worker as of 2026-11-13
-  (`04:15:46Z`).** Anything in `web/docs/deploy.md` describing it as pending is
-  historical.
 - **`PRODUCTION_URL` unset**: post-deploy smoke covers workers.dev only until
-  §6 step 8 is done.
+  §6 step 8 is done. This is the last outstanding cutover step.
 - **`main` is unprotected** and `CI` is not a required check. Deploys are gated
   only by the post-deploy smoke. Recommended: require `CI` on `main` and add
   required reviewers to the `Production` environment.
-- **Deno Deploy state unverified.** `bayside-bricks.deno.dev` does not resolve
-  and no Deno Deploy credential is stored locally, so §8.4 is recovery-only
-  until someone checks the dashboard.
+- **The corporate resolver cannot see `bricks`.** A2B's resolver
+  (`10.10.186.40`) answers for the zone but not for that name, so every local
+  `curl`/smoke run against the public hostname "fails" while the site is fine.
+  §7.1 is the workaround; do not read it as an outage.
+- **The zone record count (12) needs DNS: Edit to read.** The wrangler OAuth
+  session cannot list records (`GET /zones/{id}/dns_records` → 403), so the count
+  in §4 was read on 2026-11-13 with a DNS-capable token. The externally visible
+  records — apex `A`, `www`, five MX, SPF, `bricks` — are re-verified with `dig`
+  in §7 and need no credential.
+- **Deno Deploy is a fallback, not a mirror.** `bricks.kitsonkelly.deno.net`
+  serves the Fresh app at the repo root, kept current by Deno's own GitHub
+  integration. It is not the Astro build and does not track `web/`.
 - **Versions accumulate**: every PR push uploads a version and nothing prunes
   them (`wrangler` has no `versions delete`). Old versions are inert; delete them
   in the dashboard or with a Workers Scripts: Edit token if the list gets noisy.
@@ -594,3 +668,4 @@ delete, so prefer R1/R2 unless the script itself is unrecoverable.
 | Date | Change |
 | --- | --- |
 | 2026-11-13 | Runbook written; zone activated and cutover executed (`04:15:46Z`); smoke suite corrected to report Cloudflare's managed `robots.txt` as SKIP on the custom domain as well as workers.dev |
+| 2026-11-13 | Re-verified against live state and corrected: the Deno fallback is `bricks.kitsonkelly.deno.net` (live), not `bayside-bricks.deno.dev`; the GoDaddy `sso-key` credential is a two-line field, so the scripted NS flip now splits it; `PRODUCTION_URL` confirmed unset; added the resolver workaround (§7.1) |
