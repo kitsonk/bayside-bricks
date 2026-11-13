@@ -11,7 +11,7 @@ The pair replaced the Deno Deploy `deployctl` workflow in the same change
 | Piece | State |
 | --- | --- |
 | CI (`verify` in `ci.yml`) | green on `main` — install → typecheck → build → deploy dry run → asset check → route-table smoke |
-| Preview deployment | works: `wrangler versions upload` produces an immutable preview URL that passes the smoke suite |
+| Preview deployment | works: `wrangler versions upload` produces an immutable preview URL that passes the smoke suite, and the job asserts the live production deployment is byte-identical before and after. Requires **Preview URLs** enabled on the Worker — declared as `preview_urls: true` in `wrangler.jsonc` (§3) and re-asserted idempotently by the job if the flag is ever off |
 | Production deployment | works: `wrangler deploy` deploys the Worker, re-applies the custom domain, and the job smokes `https://bayside-bricks.me-6d3.workers.dev` (§3) |
 | Custom domain `bricks.kitandsimon.com` | **declared** in `wrangler.jsonc` (`routes` + `custom_domain`) and **attached** to Worker `bayside-bricks` (custom-domain id `775a47a8…`, cert `531f7afa…`); every production deploy re-applies it and verifies the binding — serves as soon as the zone is active |
 | Deno Deploy | untouched, last good deployment retained as rollback — but not currently reachable, because the domain itself does not resolve (below) |
@@ -26,13 +26,72 @@ stays green and the deploy jobs skip with a warning.
 | Stage | Trigger | What happens |
 | --- | --- | --- |
 | **Verify** (`ci.yml`) | every push, every PR | resolves Node from `web/.nvmrc` → `npm ci` → `npm run check` (`astro check`) → `npm run build` → `wrangler deploy --dry-run` (bundle validity) → `npm run images:check` (no hotlinked assets) → `npm test` (boots `wrangler dev` and runs the route-table smoke suite, `--images` included). On failure it uploads logs plus `dist/`. No secrets. |
-| **Preview** | pull requests (same repo) | rebuilds the PR commit, `wrangler versions upload` tagged `pr-<n>`, then the smoke suite against the preview URL, then a PR comment with the URL. Production traffic is untouched. |
+| **Preview** | pull requests (same repo) | rebuilds the PR commit, `wrangler versions upload` tagged `pr-<n>`, asserts the live production deployment id/version are unchanged, runs the smoke suite against the preview URL, then creates or updates the sticky PR comment. Production traffic is untouched. |
 | **Production** | push to `main` (or manual dispatch) | rebuilds the commit, `wrangler deploy` (which also re-applies the `bricks.kitandsimon.com` custom domain from `wrangler.jsonc`), verifies the binding via the Cloudflare API, then runs the smoke suite against the workers.dev host it deployed to and against `PRODUCTION_URL` when that variable is set. |
 
 CI and the deploy jobs are separate workflows, so GitHub does not share
 artefacts between them and each deploy job rebuilds from the same commit and
 lockfile. Require the `CI` workflow in branch protection to gate merges; the
 post-deploy smoke is the runtime gate.
+
+### Preview deployments (pull requests)
+
+Every same-repo PR gets a preview on each push (`opened`, `synchronize`,
+`reopened`). The `preview` job in `ci-cd.yml`:
+
+1. rebuilds the PR head (`npm ci` → `npm run build`);
+2. enables **preview URLs** on the Worker if they are off (see below), because
+   without them wrangler uploads the version but prints no preview URL;
+3. records the live production deployment id and version
+   (`wrangler deployments status --json`);
+4. uploads an immutable version — `npx wrangler versions upload` tagged
+   `pr-<number>` — and takes the preview URL from the `Version Preview URL:`
+   line, falling back to the deterministic
+   `https://<first 8 of version id><preview_url_suffix>` when wrangler prints no
+   URL for a version that uploaded fine;
+5. **asserts production was not touched**: the active deployment id and version
+   must be unchanged, the preview version must not be the version production
+   serves, and the preview host must not be any production hostname (workers.dev,
+   the custom domain, `PRODUCTION_URL`). Any of those failing fails the job;
+6. runs the route-table smoke suite against the preview URL;
+7. creates or updates one sticky PR comment (marker
+   `<!-- preview-deployment -->`) with the URL, commit, version and the
+   production deployment id — so a busy PR gets one comment, not one per push.
+
+The preview job deliberately does not probe production `/health`: that would tie
+every PR's verdict to production's own availability and DNS state, and says
+nothing about isolation. Deployment identity is the stronger invariant.
+
+**Preview URLs must be enabled on the Worker.** This is an account setting
+separate from `workers_dev` and from any route; a version preview URL exists
+only while it is on. It was off after the custom-domain deploy in #6 — wrangler
+then uploads the version and prints no `Version Preview URL:` line, and old
+preview URLs 404. The preview job turns it on idempotently, sending the current
+`enabled` value back unchanged so the workers.dev/route switch stays exactly as
+the production deploy set it. No production traffic or routing is touched.
+
+Isolation is structural, not just behavioural:
+
+| Mechanism | Effect |
+| --- | --- |
+| `wrangler versions upload`, never `wrangler deploy` | creates an immutable version; no deployment is created and no traffic moves |
+| no `environment: Production` on the job | a preview cannot borrow the production environment's secrets or protection rules |
+| step 4's assertion | the "preview cannot affect production" claim is *tested* on every PR, and the job goes red if it ever stops being true |
+| `pull_request` event only, same-repo only | fork PRs get no secrets and are skipped, so no untrusted code deploys with the token |
+
+The preview host is `https://<version-id>-bayside-bricks.me-6d3.workers.dev`
+(one per version, not per PR) — the PR comment is the canonical place to find
+the current one. Cloudflare also serves preview hosts with `x-robots-tag:
+noindex`, so a preview cannot be indexed and compete with production.
+
+**Known limitation — versions accumulate.** Each push to a PR uploads a new
+version and nothing deletes them; `wrangler` has no `versions delete`
+subcommand and the wrangler OAuth session is refused (`10405`) on the REST
+delete endpoint, so removal is manual: Cloudflare dashboard → Workers &
+Pages → `bayside-bricks` → *Versions*, or
+`DELETE /accounts/<account>/workers/scripts/bayside-bricks/versions/<id>` with
+an API token holding **Workers Scripts: Edit**. Old preview versions are inert
+(no traffic, no routes) but they do clutter the version list.
 
 The app has no unit tests (MIGRATION_INVENTORY.md §7), so the route-table smoke
 suite is the test gate: `web/scripts/smoke.mjs` (assertions) driven by
@@ -63,7 +122,7 @@ Set in **Settings → Secrets and variables → Actions** (or `gh secret set`):
 
 | Name | Value | Notes |
 | --- | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | scoped API token (below) | never the Global API Key, never the wrangler OAuth token |
+| `CLOUDFLARE_API_TOKEN` | scoped API token (below) | required by both deploy jobs: the preview job uploads a version and toggles **Preview URLs**, the production job deploys and attaches the custom domain — never the Global API Key, never the wrangler OAuth token |
 | `CLOUDFLARE_ACCOUNT_ID` | `6d3c3bec6c29c262b87b782e7a7b12de` | Kitson Kelly Personal Account |
 
 Optional repository **variable** `PRODUCTION_URL` overrides the production smoke
@@ -78,7 +137,7 @@ production jobs are skipped. Add the secrets and the next push deploys.
 
 | Scope | Permission | Why |
 | --- | --- | --- |
-| Account | **Workers Scripts: Edit** | `wrangler versions upload` / `wrangler deploy` |
+| Account | **Workers Scripts: Edit** | `wrangler versions upload` / `wrangler deploy`, and enabling **Preview URLs** on the Worker (`POST …/workers/scripts/bayside-bricks/subdomain`) |
 | Account | **Account Settings: Read** | account lookup during deploy |
 | Zone | **Workers Routes: Edit** | attaching the custom domain to the Worker |
 | Zone | **Zone: Read** | resolving the zone id at deploy time |
