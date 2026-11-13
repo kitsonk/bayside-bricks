@@ -212,3 +212,5 @@ integrations (inventory §8/§9.4).
 | T6 | Rendered HTML references match `public/` paths exactly | Grep `src/` for `img/`, `vendor/`, `logo`, `favicon` refs; each maps to a real file | **Executed 2026-11-13:** the 7 `img` refs are `src="/img/<id>.JPG"` and each resolves 200 from `dist/client/img/`; `/` contains **zero** `bricklink.com/myImg` references; `/logo.svg` + `/vendor/…js` resolve, `/styles.css` 200 |
 | T7 | Bricklink storefront embed renders and auto-resizes | Manual: load the store page containing the iframe after cutover; verify render + resize | **Run at cutover/soak** (needs Bricklink store access — Simon) |
 | T8 | Visual parity of `/` and 404 vs the live Deno Deploy site | Manual side-by-side (layout, images, title strings) | **Run at verification stage** (QA card) |
+
+<!-- preview pipeline proof run -->
