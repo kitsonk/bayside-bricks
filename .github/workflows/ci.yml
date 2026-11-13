@@ -1,0 +1,168 @@
+name: CI
+
+# Continuous integration: install, typecheck, build, validate the deploy bundle,
+# and run the route-table test suite. It runs on every pull request and on every
+# push to `main`, needs **no secrets**, and never talks to Cloudflare.
+# Deployment (PR previews and production) lives in `ci-cd.yml`.
+#
+# Exact commands, run from the app directory (`web/` today; the resolve step
+# below follows the scaffold automatically if it is promoted to the repo root):
+#
+#   npm ci                     # install exactly what package-lock.json pins
+#   npm run check              # `astro check` — only when the script exists
+#   npm run build              # `astro build`
+#   npx wrangler deploy --dry-run --outdir .wrangler/dry-run -c dist/server/wrangler.json
+#   npm run images:check       # no hotlinked images — only when the script exists
+#   npm test                   # `node scripts/smoke-local.mjs`
+#
+# Toolchain:
+#   Node   first of `web/.nvmrc`, `package.json` `engines.node` (lowest version
+#          satisfying the range), else 22. The resolved value is echoed in the
+#          job log and used by actions/setup-node.
+#   npm    the npm bundled with that Node. `package.json` also pins
+#          `packageManager: npm@12.0.2`; npm 12 requires the `allowScripts`
+#          block in `package.json` to run `workerd`/`esbuild` install scripts,
+#          which `wrangler dev` (and therefore `npm test`) needs. Do not remove
+#          it: npm 12 silently skips those scripts without it.
+#
+# Local equivalents — from `web/`: `npm ci && npm run check && npm run build &&
+# npm test`. See `web/README.md` ("Continuous integration").
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    name: Install, build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Resolve everything that could drift (app location, Node version, which
+      # optional scripts exist) in one place, so the rest of the job is plain
+      # commands rather than conditionals.
+      - name: Resolve app directory and toolchain
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The Astro/Workers app lives in web/ until the scaffold is promoted to
+          # the repository root (tracked by t_bc7cf085). Detect rather than assume.
+          if [ -f web/package.json ]; then
+            APP_DIR=web
+          elif [ -f package.json ]; then
+            APP_DIR=.
+          else
+            echo "::error::no package.json found in the repository root or web/"
+            exit 1
+          fi
+          echo "dir=$APP_DIR" >> "$GITHUB_OUTPUT"
+
+          # Node: .nvmrc pins local development and wins; otherwise take the
+          # lowest major that satisfies engines.node; otherwise fall back to 22.
+          if [ -f "$APP_DIR/.nvmrc" ]; then
+            NODE_VERSION="$(tr -d '[:space:]' < "$APP_DIR/.nvmrc")"
+            NODE_SOURCE="$APP_DIR/.nvmrc"
+          else
+            NODE_VERSION="$(node -e '
+              const fs = require("fs");
+              const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              const range = (pkg.engines && pkg.engines.node) || "";
+              const major = range.match(/(\d+)/);
+              process.stdout.write(major ? major[1] : "22");
+            ' "$APP_DIR/package.json")"
+            NODE_SOURCE="$APP_DIR/package.json engines.node"
+          fi
+          NODE_VERSION="${NODE_VERSION#v}"
+          echo "version=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+
+          # Optional scripts: missing ones are skipped instead of failing the run.
+          # Output names avoid ':' so they can be used in expressions.
+          for pair in "check|check" "images:check|images_check" "test|test"; do
+            script="${pair%%|*}"
+            output="has-${pair#*|}"
+            if node -e '
+              const pkg = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+              process.exit(pkg.scripts && pkg.scripts[process.argv[2]] ? 0 : 1);
+            ' "$APP_DIR/package.json" "$script"; then
+              echo "$output=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$output=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+          {
+            echo "### CI toolchain"
+            echo
+            echo "- App directory: \`$APP_DIR\`"
+            echo "- Node: \`$NODE_VERSION\` (from \`$NODE_SOURCE\`)"
+            echo "- npm: \`$(npm --version)\` (bundled with Node)"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Node ${{ steps.resolve.outputs.version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.resolve.outputs.version }}
+          cache: npm
+          cache-dependency-path: ${{ steps.resolve.outputs.dir }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ steps.resolve.outputs.dir }}
+        run: npm ci
+
+      - name: Typecheck
+        if: steps.resolve.outputs.has-check == 'true'
+        working-directory: ${{ steps.resolve.outputs.dir }}
+        run: npm run check 2>&1 | tee ci-check.log
+
+      - name: Build
+        working-directory: ${{ steps.resolve.outputs.dir }}
+        run: npm run build 2>&1 | tee ci-build.log
+
+      # Catches bundling/config regressions before anything is uploaded: the
+      # adapter-generated dist/server/wrangler.json is what deploy uses.
+      - name: Validate deploy bundle
+        working-directory: ${{ steps.resolve.outputs.dir }}
+        run: npx wrangler deploy --dry-run --outdir .wrangler/dry-run -c dist/server/wrangler.json 2>&1 | tee ci-dry-run.log
+
+      # Guards the self-hosted-asset invariant: every image is local, no hotlinks.
+      - name: Check assets are self-hosted
+        if: steps.resolve.outputs.has-images_check == 'true'
+        working-directory: ${{ steps.resolve.outputs.dir }}
+        run: npm run images:check 2>&1 | tee ci-images.log
+
+      # The repo has no unit tests (MIGRATION_INVENTORY.md §7): the route table is
+      # the test suite. `--images` also asserts the seven /img/*.JPG files are
+      # served from this Worker rather than hotlinked from BrickLink.
+      - name: Test (route-table smoke suite)
+        if: steps.resolve.outputs.has-test == 'true'
+        working-directory: ${{ steps.resolve.outputs.dir }}
+        env:
+          SMOKE_ARGS: --images
+        run: npm test 2>&1 | tee ci-test.log
+
+      - name: Upload failure logs and build output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-failure-${{ github.sha }}
+          path: |
+            ${{ steps.resolve.outputs.dir }}/ci-*.log
+            ${{ steps.resolve.outputs.dir }}/dist
+            ${{ steps.resolve.outputs.dir }}/.wrangler
+          retention-days: 7
+          if-no-files-found: ignore

@@ -82,12 +82,35 @@ against the complete 23-file tree. Nothing to migrate, recreate, or seed;
 `session: false` and `imageService: "passthrough"`), and none should be added
 without a concrete requirement.
 
+## Continuous integration
+
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs on every pull
+request and every push to `main`. It needs **no secrets** and never talks to
+Cloudflare. From this directory it runs exactly:
+
+```bash
+npm ci
+npm run check      # `astro check`
+npm run build      # `astro build`
+npx wrangler deploy --dry-run --outdir .wrangler/dry-run -c dist/server/wrangler.json
+npm run images:check
+npm test           # route-table smoke suite via scripts/smoke-local.mjs
+```
+
+`npm run check`, `npm run images:check` and `npm test` are skipped if the
+corresponding script is absent, so the workflow stays valid if one is removed.
+Node is resolved from `.nvmrc` first, then the lowest version satisfying
+`engines.node`. On failure the workflow uploads the step logs plus `dist/` as a
+`ci-failure-<sha>` artefact. Repro locally with `SMOKE_ARGS=--images npm test`
+(CI always enables the `/img/*.JPG` assertions).
+
 ## Deployment assumptions
 
-CI/CD, the `bricks.kitandsimon.com` custom-domain cutover and rollback are
-documented in [`docs/deploy.md`](docs/deploy.md). CI lives in
-`.github/workflows/ci-cd.yml` (it replaced the Deno Deploy `deployctl`
-workflow).
+Deployment (PR previews and production) is
+[`ci-cd.yml`](../.github/workflows/ci-cd.yml), which rebuilds the commit and
+deploys it with Wrangler; the `bricks.kitandsimon.com` custom-domain cutover,
+required secrets and rollback are documented in [`docs/deploy.md`](docs/deploy.md).
+The two workflows replaced the Deno Deploy `deployctl` workflow.
 
 - `npm run build` is always run before any `wrangler dev`/`wrangler deploy`
   invocation against `dist/server/wrangler.json` — the adapter emits that
