@@ -7,8 +7,9 @@ name: CI/CD
 # Pipeline
 #   CI        `.github/workflows/ci.yml`: install, typecheck, build, deploy dry
 #             run and route-table tests on every push and PR. No secrets.
-#   preview   PRs only:       upload an immutable Worker version, smoke its
-#                             preview URL, comment on the PR
+#   preview   PRs only:       upload an immutable Worker version, assert the
+#                             live production deployment was not touched, smoke
+#                             the preview URL, upsert one sticky PR comment
 #   production push to main:  deploy the commit, then smoke the deployed Worker
 #
 # The deploy jobs rebuild from the same commit/lockfile that CI verified rather
@@ -84,6 +85,18 @@ jobs:
     name: Preview deployment (PR)
     # Same-repo PRs only: fork PRs get no secrets, so they cannot deploy.
     # Inputs used in shell below are numeric (PR number) or a commit SHA.
+    #
+    # Isolation model — a preview must not be able to affect production:
+    #   * it uploads an immutable version (`wrangler versions upload`) and never
+    #     `wrangler deploy`, so no traffic moves and no deployment is created;
+    #   * it never declares `environment: Production`, so it cannot borrow the
+    #     production environment's secrets or protection rules;
+    #   * the "Assert production was not touched" step reads the live
+    #     deployment before and after the upload and fails the job if either
+    #     the active deployment id or its version changed — the guarantee is
+    #     tested on every PR rather than assumed;
+    #   * it refuses a preview URL that is the production host (see the URL
+    #     parsing below).
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
@@ -114,39 +127,134 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Baseline for the isolation assertion after the upload.
+      - name: Record the live production deployment
+        id: baseline
+        run: |
+          set -euo pipefail
+          if ! json=$(npx wrangler deployments status -c dist/server/wrangler.json --json 2>/dev/null); then
+            echo "::warning::could not read the live deployment; isolation will be asserted on the preview URL and production health only"
+            json='{}'
+          fi
+          deployment=$(jq -r '.id // ""' <<<"$json")
+          version=$(jq -r '.versions[0].version_id // ""' <<<"$json")
+          echo "deployment=$deployment" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Active production deployment before this run: ${deployment:-unknown} (version ${version:-unknown})"
+
       # An immutable version + preview URL: uploads without moving production
       # traffic. Production stays on the last `wrangler deploy` until merged.
       - name: Upload preview version
         id: upload
         run: |
+          set -euo pipefail
           npx wrangler versions upload -c dist/server/wrangler.json \
             --tag "pr-${{ github.event.pull_request.number }}" \
             --message "PR #${{ github.event.pull_request.number }} @ ${{ github.event.pull_request.head.sha }}" \
             | tee version-upload.log
-          url=$(grep -oE 'https://[^[:space:]]+workers\.dev' version-upload.log | head -n1)
+
+          # Parse the lines wrangler labels. Grepping for "the first workers.dev
+          # URL" is unsafe: the production host is a workers.dev URL too, so a
+          # wrong match would smoke — and pass — against production and call it
+          # a preview.
+          url=$(grep -F 'Version Preview URL:' version-upload.log | grep -oE 'https://[^[:space:]]+' | head -n1 || true)
+          version=$(grep -F 'Worker Version ID:' version-upload.log | grep -oE '[0-9a-f]{8}-[0-9a-f-]{27}' | head -n1 || true)
           if [ -z "$url" ]; then
-            echo "::error::could not find a preview URL in the wrangler output"
+            echo "::error::could not find a 'Version Preview URL:' line in the wrangler output"
             exit 1
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Preview URL: $url (version ${version:-unknown})"
+
+      # The load-bearing check for "previews cannot affect production".
+      - name: Assert production was not touched
+        env:
+          BASELINE_DEPLOYMENT: ${{ steps.baseline.outputs.deployment }}
+          BASELINE_VERSION: ${{ steps.baseline.outputs.version }}
+          PREVIEW_URL: ${{ steps.upload.outputs.url }}
+          PREVIEW_VERSION: ${{ steps.upload.outputs.version }}
+        run: |
+          set -euo pipefail
+          prod_url='https://bayside-bricks.me-6d3.workers.dev'
+
+          case "${PREVIEW_URL%/}" in
+            "$prod_url")
+              echo "::error::the preview URL is the production host — this is not a preview"
+              exit 1
+              ;;
+          esac
+
+          if [ -n "$BASELINE_DEPLOYMENT" ]; then
+            json=$(npx wrangler deployments status -c dist/server/wrangler.json --json)
+            now_deployment=$(jq -r '.id // ""' <<<"$json")
+            now_version=$(jq -r '.versions[0].version_id // ""' <<<"$json")
+            echo "production before: $BASELINE_DEPLOYMENT / $BASELINE_VERSION"
+            echo "production after:  $now_deployment / $now_version"
+            if [ "$now_deployment" != "$BASELINE_DEPLOYMENT" ] || [ "$now_version" != "$BASELINE_VERSION" ]; then
+              echo "::error::the preview upload changed the active production deployment — isolation is broken"
+              exit 1
+            fi
+            if [ -n "$PREVIEW_VERSION" ] && [ "$PREVIEW_VERSION" = "$now_version" ]; then
+              echo "::error::the uploaded preview version is the version production is serving"
+              exit 1
+            fi
+            echo "Production deployment unchanged: $now_deployment ($now_version)."
+          else
+            echo "::warning::no baseline deployment recorded — asserting isolation on production health only"
+          fi
+
+          code=$(curl -s -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 2 "$prod_url/health")
+          if [ "$code" != "200" ]; then
+            echo "::error::production /health returned $code after the preview upload"
+            exit 1
+          fi
+          echo "Production /health: 200."
 
       - name: Smoke test preview deployment
         run: node scripts/smoke.mjs "${{ steps.upload.outputs.url }}"
 
+      # One sticky comment per PR, rewritten on every push, so a busy PR does
+      # not accumulate a comment per commit and reviewers always see the
+      # current preview URL.
       - name: Comment preview URL on PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PREVIEW_URL: ${{ steps.upload.outputs.url }}
+          PREVIEW_VERSION: ${{ steps.upload.outputs.version }}
+          PRODUCTION_DEPLOYMENT: ${{ steps.baseline.outputs.deployment }}
         run: |
+          set -euo pipefail
+          pr="${{ github.event.pull_request.number }}"
+          sha="${{ github.event.pull_request.head.sha }}"
           {
-            echo "**Preview deployment:** $PREVIEW_URL"
+            echo "<!-- preview-deployment -->"
+            echo "### Preview deployment"
             echo
-            echo "Version \`pr-${{ github.event.pull_request.number }}\` uploaded from ${{ github.event.pull_request.head.sha }}."
-            echo "Route-table smoke test passed against the preview URL."
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Preview URL | $PREVIEW_URL |"
+            echo "| Commit | <code>$sha</code> |"
+            echo "| Worker version | <code>${PREVIEW_VERSION:-unknown}</code> (tag <code>pr-$pr</code>) |"
+            echo "| Route-table smoke suite | passed |"
+            echo "| Production | untouched — deployment <code>${PRODUCTION_DEPLOYMENT:-unknown}</code> unchanged |"
             echo
-            echo "_Production traffic is untouched; merge to \`main\` to deploy._"
+            echo "Immutable version upload (<code>wrangler versions upload</code>): no traffic moved, no deployment created. Merge to <code>main</code> to deploy."
+            echo
+            echo "<sub>Updated automatically on every push to this PR.</sub>"
           } > preview-comment.md
-          gh pr comment "${{ github.event.pull_request.number }}" --body-file preview-comment.md
+
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$pr/comments?per_page=100" \
+            --jq '[.[] | select(.body | contains("<!-- preview-deployment -->"))][0].id // empty')
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" \
+              -F body=@preview-comment.md > /dev/null
+            echo "Updated the existing preview comment ($existing)."
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$pr/comments" \
+              -F body=@preview-comment.md > /dev/null
+            echo "Created the preview comment."
+          fi
 
   production:
     name: Production deployment (main)

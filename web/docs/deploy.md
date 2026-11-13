@@ -26,13 +26,55 @@ stays green and the deploy jobs skip with a warning.
 | Stage | Trigger | What happens |
 | --- | --- | --- |
 | **Verify** (`ci.yml`) | every push, every PR | resolves Node from `web/.nvmrc` → `npm ci` → `npm run check` (`astro check`) → `npm run build` → `wrangler deploy --dry-run` (bundle validity) → `npm run images:check` (no hotlinked assets) → `npm test` (boots `wrangler dev` and runs the route-table smoke suite, `--images` included). On failure it uploads logs plus `dist/`. No secrets. |
-| **Preview** | pull requests (same repo) | rebuilds the PR commit, `wrangler versions upload` tagged `pr-<n>`, then the smoke suite against the preview URL, then a PR comment with the URL. Production traffic is untouched. |
+| **Preview** | pull requests (same repo) | rebuilds the PR commit, `wrangler versions upload` tagged `pr-<n>`, asserts the live production deployment id/version are unchanged, runs the smoke suite against the preview URL, then creates or updates the sticky PR comment. Production traffic is untouched. |
 | **Production** | push to `main` (or manual dispatch) | rebuilds the commit, `wrangler deploy`, then the smoke suite against the workers.dev host it deployed to and against `PRODUCTION_URL` when that variable is set. |
 
 CI and the deploy jobs are separate workflows, so GitHub does not share
 artefacts between them and each deploy job rebuilds from the same commit and
 lockfile. Require the `CI` workflow in branch protection to gate merges; the
 post-deploy smoke is the runtime gate.
+
+### Preview deployments (pull requests)
+
+Every same-repo PR gets a preview on each push (`opened`, `synchronize`,
+`reopened`). The `preview` job in `ci-cd.yml`:
+
+1. rebuilds the PR head (`npm ci` → `npm run build`);
+2. records the live production deployment id and version
+   (`wrangler deployments status --json`);
+3. uploads an immutable version — `npx wrangler versions upload` tagged
+   `pr-<number>` — and parses the `Version Preview URL:` and
+   `Worker Version ID:` lines out of wrangler's output;
+4. **asserts production was not touched**: the active deployment id and version
+   must be unchanged, the preview version must not be the version production
+   serves, the preview URL must not be the production host, and production
+   `/health` must still return 200. Any of those failing fails the job;
+5. runs the route-table smoke suite against the preview URL;
+6. creates or updates one sticky PR comment (marker
+   `<!-- preview-deployment -->`) with the URL, commit, version and the
+   production deployment id — so a busy PR gets one comment, not one per push.
+
+Isolation is structural, not just behavioural:
+
+| Mechanism | Effect |
+| --- | --- |
+| `wrangler versions upload`, never `wrangler deploy` | creates an immutable version; no deployment is created and no traffic moves |
+| no `environment: Production` on the job | a preview cannot borrow the production environment's secrets or protection rules |
+| step 4's assertion | the "preview cannot affect production" claim is *tested* on every PR, and the job goes red if it ever stops being true |
+| `pull_request` event only, same-repo only | fork PRs get no secrets and are skipped, so no untrusted code deploys with the token |
+
+The preview host is `https://<version-id>-bayside-bricks.me-6d3.workers.dev`
+(one per version, not per PR) — the PR comment is the canonical place to find
+the current one.
+
+**Known limitation — versions accumulate.** Each push to a PR uploads a new
+version and nothing deletes them; `wrangler` has no `versions delete`
+subcommand and the wrangler OAuth session is refused (`10405`) on the REST
+delete endpoint, so removal is manual: Cloudflare dashboard → Workers &
+Pages → `bayside-bricks` → *Versions*, or
+`DELETE /accounts/<account>/workers/scripts/bayside-bricks/versions/<id>` with
+an API token holding **Workers Scripts: Edit**. Old preview versions are inert
+(no traffic, no routes) but they do clutter the version list.
 
 The app has no unit tests (MIGRATION_INVENTORY.md §7), so the route-table smoke
 suite is the test gate: `web/scripts/smoke.mjs` (assertions) driven by
