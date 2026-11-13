@@ -11,7 +11,7 @@ The pair replaced the Deno Deploy `deployctl` workflow in the same change
 | Piece | State |
 | --- | --- |
 | CI (`verify` in `ci.yml`) | green on `main` — install → typecheck → build → deploy dry run → asset check → route-table smoke |
-| Preview deployment | works: `wrangler versions upload` produces an immutable preview URL that passes the smoke suite |
+| Preview deployment | works: `wrangler versions upload` produces an immutable preview URL that passes the smoke suite. Requires **Preview URLs** enabled on the Worker (a production deploy turned them off once); the preview job re-asserts them idempotently |
 | Production deployment | works: `wrangler deploy` serves `https://bayside-bricks.me-6d3.workers.dev` (smoke green) |
 | Custom domain `bricks.kitandsimon.com` | **declared** in `wrangler.jsonc` (`routes` + `custom_domain`) and **attached** to Worker `bayside-bricks` (custom-domain id `775a47a8…`, cert `531f7afa…`); every production deploy re-applies it and verifies the binding — serves as soon as the zone is active |
 | Deno Deploy | untouched, last good deployment retained as rollback — but not currently reachable, because the domain itself does not resolve (below) |
@@ -122,7 +122,7 @@ Set in **Settings → Secrets and variables → Actions** (or `gh secret set`):
 
 | Name | Value | Notes |
 | --- | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | scoped API token (below) | never the Global API Key, never the wrangler OAuth token |
+| `CLOUDFLARE_API_TOKEN` | scoped API token (below) | required by both deploy jobs: the preview job uploads a version and toggles **Preview URLs**, the production job deploys and attaches the custom domain — never the Global API Key, never the wrangler OAuth token |
 | `CLOUDFLARE_ACCOUNT_ID` | `6d3c3bec6c29c262b87b782e7a7b12de` | Kitson Kelly Personal Account |
 
 Optional repository **variable** `PRODUCTION_URL` overrides the production smoke
@@ -137,7 +137,7 @@ production jobs are skipped. Add the secrets and the next push deploys.
 
 | Scope | Permission | Why |
 | --- | --- | --- |
-| Account | **Workers Scripts: Edit** | `wrangler versions upload` / `wrangler deploy` |
+| Account | **Workers Scripts: Edit** | `wrangler versions upload` / `wrangler deploy`, and enabling **Preview URLs** on the Worker (`POST …/workers/scripts/bayside-bricks/subdomain`) |
 | Account | **Account Settings: Read** | account lookup during deploy |
 | Zone | **Workers Routes: Edit** | attaching the custom domain to the Worker |
 | Zone | **Zone: Read** | resolving the zone id at deploy time |
