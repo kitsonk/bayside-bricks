@@ -65,7 +65,8 @@ Isolation is structural, not just behavioural:
 
 The preview host is `https://<version-id>-bayside-bricks.me-6d3.workers.dev`
 (one per version, not per PR) — the PR comment is the canonical place to find
-the current one.
+the current one. Cloudflare also serves preview hosts with `x-robots-tag:
+noindex`, so a preview cannot be indexed and compete with production.
 
 **Known limitation — versions accumulate.** Each push to a PR uploads a new
 version and nothing deletes them; `wrangler` has no `versions delete`
