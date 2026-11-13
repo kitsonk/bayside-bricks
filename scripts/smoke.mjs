@@ -11,7 +11,7 @@
 //
 // `--images` adds the /img/<id>.JPG self-hosting assertions. They are OFF by
 // default because the seven BrickLink photos are still hotlinked until
-// t_e45969d3 flips them (web/README.md, "Static assets"). Turn them on in CI
+// t_e45969d3 flips them (README.md, "Static assets"). Turn them on in CI
 // once that card lands.
 //
 // Exit codes: 0 all checks pass; 1 at least one check failed.

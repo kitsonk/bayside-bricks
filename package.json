@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Bayside Bricks — Astro on Cloudflare Workers (migration target for the Deno Fresh app at the repo root)",
+  "description": "Bayside Bricks — Astro on Cloudflare Workers (the site served from the repository root)",
   "engines": {
     "node": ">=20"
   },

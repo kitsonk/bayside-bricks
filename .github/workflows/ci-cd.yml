@@ -19,11 +19,11 @@ name: CI/CD
 # workflow (branch protection) — plus the post-deploy smoke below, which fails
 # the job if the deployed Worker is unhealthy.
 #
-# Required repository secrets (see web/docs/deploy.md):
+# Required repository secrets (see docs/deploy.md):
 #   CLOUDFLARE_API_TOKEN    scoped Workers + zone token, nothing else
 #                           (Workers Scripts: Edit + Workers Routes: Edit —
 #                           the production job attaches the custom domain
-#                           declared in web/wrangler.jsonc)
+#                           declared in wrangler.jsonc)
 #   CLOUDFLARE_ACCOUNT_ID   Cloudflare account id
 # Optional repository variable (may live on the `Production` environment):
 #   PRODUCTION_URL          public URL to smoke after deploy. Unset until the
@@ -31,7 +31,7 @@ name: CI/CD
 #                           workers.dev host, which the deploy step discovers.
 #
 # Production hostname: bricks.kitandsimon.com, declared as a `routes` entry
-# with `custom_domain: true` in web/wrangler.jsonc. The adapter copies it into
+# with `custom_domain: true` in wrangler.jsonc. The adapter copies it into
 # dist/server/wrangler.json, so `wrangler deploy` is the single source of truth
 # for the binding — no dashboard step. Deploying that route works while the
 # zone is still pending (it serves once the registrar points at Cloudflare).
@@ -42,7 +42,7 @@ name: CI/CD
 # Settings → Preview URLs) and a production `wrangler deploy` turned it off
 # once, silently suppressing the `Version Preview URL:` line. The preview job
 # therefore re-asserts it on every run, preserving the workers.dev/route switch
-# exactly as the deploy job left it. See web/docs/deploy.md.
+# exactly as the deploy job left it. See docs/deploy.md.
 
 on:
   push:
@@ -60,9 +60,9 @@ concurrency:
 
 defaults:
   run:
-    # The Astro/Workers app lives in web/ until the scaffold is promoted to the
-    # repository root (tracked by t_bc7cf085). Keep every path relative to it.
-    working-directory: web
+    # The Astro/Workers app is the repository root (promoted from `web/` on
+    # 2026-11-13), so every path below is relative to the repo root.
+    working-directory: .
     # Required, not cosmetic: the deploy steps pipe wrangler's output into `tee`
     # to scrape the deployed URL. GitHub's default shell is `bash -e {0}`, which
     # has no `pipefail`, so the pipeline would exit with `tee`'s status (0) and a
@@ -73,7 +73,7 @@ jobs:
   # Deploying needs Cloudflare credentials. Rather than fail red on a repo
   # without them, detect once and let the deploy jobs no-op with a warning —
   # a fork, a fresh clone or a local secret-less run still gets a green CI on
-  # the part that can actually run (verify). See web/docs/deploy.md.
+  # the part that can actually run (verify). See docs/deploy.md.
   prerequisites:
     name: Deploy prerequisites
     runs-on: ubuntu-latest
@@ -95,7 +95,7 @@ jobs:
             echo "Cloudflare credentials present."
           else
             echo "deploy=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::CLOUDFLARE_API_TOKEN and/or CLOUDFLARE_ACCOUNT_ID are not set — deploy jobs will be skipped. See web/docs/deploy.md."
+            echo "::warning::CLOUDFLARE_API_TOKEN and/or CLOUDFLARE_ACCOUNT_ID are not set — deploy jobs will be skipped. See docs/deploy.md."
           fi
 
   preview:
@@ -131,12 +131,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node (from web/.nvmrc)
+      - name: Set up Node (from .nvmrc)
         uses: actions/setup-node@v4
         with:
-          node-version-file: web/.nvmrc
+          node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -357,12 +357,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node (from web/.nvmrc)
+      - name: Set up Node (from .nvmrc)
         uses: actions/setup-node@v4
         with:
-          node-version-file: web/.nvmrc
+          node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -381,7 +381,7 @@ jobs:
           # "Process completed with exit code 1" and no explanation).
           url=$(grep -oE 'https://[^[:space:]]+workers\.dev' deploy.log | head -n1 || true)
           if [ -z "$url" ]; then
-            echo "::error::wrangler deployed, but its output has no workers.dev URL to smoke. \`\"workers_dev\": true\` in web/wrangler.jsonc is load-bearing: without it wrangler disables workers.dev whenever \`routes\` is present, which removes the only host that serves this build before the DNS cutover."
+            echo "::error::wrangler deployed, but its output has no workers.dev URL to smoke. \`\"workers_dev\": true\` in wrangler.jsonc is load-bearing: without it wrangler disables workers.dev whenever \`routes\` is present, which removes the only host that serves this build before the DNS cutover."
             grep -iE 'workers_dev|workers\.dev' deploy.log || true
             exit 1
           fi
@@ -392,7 +392,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Deployed $url (version ${version:-unknown})"
 
-      # The deploy above applies the `routes` entry from web/wrangler.jsonc, so
+      # The deploy above applies the `routes` entry from wrangler.jsonc, so
       # the custom-domain binding is reproducible rather than a one-off
       # dashboard/API change. Verify it landed: `wrangler deploy` reports
       # success for the script upload even if the hostname were not attached,
@@ -416,7 +416,7 @@ jobs:
             bound=$(jq -r --arg d "$DOMAIN" --arg w "$WORKER" \
               '.result[] | select(.hostname == $d and .service == $w) | .hostname' <<<"$domains")
             if [ "$bound" != "$DOMAIN" ]; then
-              echo "::error::$DOMAIN is not bound to Worker $WORKER. It is declared in web/wrangler.jsonc routes, so the deploy should have attached it — check the token's Workers Routes scope."
+              echo "::error::$DOMAIN is not bound to Worker $WORKER. It is declared in wrangler.jsonc routes, so the deploy should have attached it — check the token's Workers Routes scope."
               exit 1
             fi
             echo "::notice::$DOMAIN is bound to $WORKER."
@@ -429,17 +429,17 @@ jobs:
             # the deploy's own output names the hostname.
             jq -r '.errors[]?.message' <<<"$domains" || true
             if grep -qF "$DOMAIN (custom domain)" deploy.log; then
-              echo "::warning::could not list Worker custom domains with this token, but \`wrangler deploy\` reported '$DOMAIN (custom domain)' as an attached trigger. Add Workers Routes: Read (web/docs/deploy.md §2) to verify the binding from CI."
+              echo "::warning::could not list Worker custom domains with this token, but \`wrangler deploy\` reported '$DOMAIN (custom domain)' as an attached trigger. Add Workers Routes: Read (docs/deploy.md §2) to verify the binding from CI."
               bound="$DOMAIN (reported by wrangler deploy)"
             else
-              echo "::error::could not list Worker custom domains and the deploy did not report $DOMAIN as an attached trigger — the token needs Zone → Workers Routes: Edit (web/docs/deploy.md §2)"
+              echo "::error::could not list Worker custom domains and the deploy did not report $DOMAIN as an attached trigger — the token needs Zone → Workers Routes: Edit (docs/deploy.md §2)"
               exit 1
             fi
           fi
           echo "domain=$bound" >> "$GITHUB_OUTPUT"
 
           # Advisory: the zone cannot serve until the registrar delegates to
-          # Cloudflare's nameservers (web/docs/deploy.md §4). A read failure is
+          # Cloudflare's nameservers (docs/deploy.md §4). A read failure is
           # not a deploy failure.
           zone=$(curl -sS --retry 3 --retry-delay 2 -H "$auth" \
             "$api/zones?name=$ZONE" 2>/dev/null || echo '{}')
@@ -451,7 +451,7 @@ jobs:
 
       # Smoke the Worker on the host it was actually deployed to. The custom
       # domain is only smoke-tested once PRODUCTION_URL points at it (after the
-      # DNS cutover, web/docs/deploy.md §4) — before that it still resolves to
+      # DNS cutover, docs/deploy.md §4) — before that it still resolves to
       # the old Deno Deploy site, which is not this build.
       - name: Smoke test the deployed Worker
         run: node scripts/smoke.mjs "${{ steps.deploy.outputs.url }}"
@@ -474,11 +474,11 @@ jobs:
             echo
             echo "- Commit: \`${{ github.sha }}\`"
             echo "- Worker URL: $WORKER_URL"
-            echo "- Custom domain: $DOMAIN — bound to \`bayside-bricks\` (declared in \`web/wrangler.jsonc\`)"
+            echo "- Custom domain: $DOMAIN — bound to \`bayside-bricks\` (declared in \`wrangler.jsonc\`)"
             echo "- Zone \`kitandsimon.com\`: $ZONE_STATUS"
             if [ "$ZONE_STATUS" != "active" ]; then
               echo
-              echo "  The binding exists but the hostname will not resolve until the registrar delegates to Cloudflare's nameservers (\`web/docs/deploy.md\` §4). Until then this deployment is served on the workers.dev URL above."
+              echo "  The binding exists but the hostname will not resolve until the registrar delegates to Cloudflare's nameservers (\`docs/deploy.md\` §4). Until then this deployment is served on the workers.dev URL above."
             fi
             if [ -n "$PUBLIC_URL" ]; then
               echo "- Public URL: $PUBLIC_URL (smoke-tested)"
@@ -487,5 +487,5 @@ jobs:
             fi
             echo "- Route-table smoke test: passed"
             echo
-            echo "Rollback: \`npx wrangler rollback -c dist/server/wrangler.json\` or re-run this job on the last good commit (web/docs/deploy.md §5)."
+            echo "Rollback: \`npx wrangler rollback -c dist/server/wrangler.json\` or re-run this job on the last good commit (docs/deploy.md §5)."
           } >> "$GITHUB_STEP_SUMMARY"

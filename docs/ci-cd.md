@@ -7,10 +7,10 @@ back safely.
 
 Written so that an operator who has never touched this stack can execute the
 cutover or a rollback from this page alone. Design rationale and the as-built
-history live in [`web/docs/deploy.md`](../web/docs/deploy.md); this document is
-the *do this now* half.
+history live in [`deploy.md`](deploy.md); this document is the *do this now*
+half.
 
-- App: `web/` (Astro 7 SSR, `@astrojs/cloudflare`)
+- App: repository root — Astro 7 SSR, `@astrojs/cloudflare`
 - Pipelines: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (verify),
   [`.github/workflows/ci-cd.yml`](../.github/workflows/ci-cd.yml) (preview + production)
 - Last verified against production: 2026-11-13, commit `2b85425`
@@ -63,7 +63,7 @@ Rules of engagement:
 | Registrar | GoDaddy, status `ACTIVE`, delegating to the pair above |
 | Workflows | `CI` (`ci.yml`, id 416806081), `CI/CD` (`ci-cd.yml`, id 411649003) |
 | GitHub environment | `Production` (used by the production job; no protection rules today) |
-| Legacy hosting | Deno Deploy project `kitsonkelly/bricks`, live at `https://bricks.kitsonkelly.deno.net` (the Fresh app at the repo root). The `deployctl` workflow was retired in `07a9b3e`, but Deno's own GitHub integration still builds that app on every push to `main` (check run `deploy/kitsonkelly/bricks`), so the fallback stays warm |
+| Legacy hosting | Deno Deploy project `kitsonkelly/bricks`, live at `https://bricks.kitsonkelly.deno.net` (the retired Fresh app). The `deployctl` workflow was retired in `07a9b3e`; Deno's own GitHub integration is still connected (check run `deploy/kitsonkelly/bricks`), but the Fresh tree it builds was deleted from this repository, so from that commit on its builds have no entrypoint and fail — the host keeps serving its last successful deployment until the project is deleted |
 
 Set these for every command block below:
 
@@ -92,10 +92,10 @@ Everything else, so that "is the list complete?" has an auditable answer:
 | GitHub repository variables | none set. `PRODUCTION_URL` is optional and currently unset (§3.4) |
 | GitHub environment `Production` secrets/variables | none — the environment only groups the production job |
 | Worker secrets (`wrangler secret list --name bayside-bricks`) | `[]` — the app requires none |
-| Local dev secrets | none. `web/.dev.vars` (gitignored) holds only `APP_ENV=development`; `web/.dev.vars.example` is the committed template |
+| Local dev secrets | none. `.dev.vars` (gitignored) holds only `APP_ENV=development`; `.dev.vars.example` is the committed template |
 | `GITHUB_TOKEN` | automatic per-run; needs only `contents: read` + `pull-requests: write` for the sticky preview comment |
 
-The application itself has no runtime secrets: `web/src/lib/env.ts` reads plain
+The application itself has no runtime secrets: `src/lib/env.ts` reads plain
 variables, and the environment matrix (`.dev.vars.example`) records "no secrets,
 one non-secret variable". If that ever changes, add the variable here **and** to
 §6's checklist.
@@ -171,7 +171,7 @@ gh secret delete CLOUDFLARE_ACCOUNT_ID --repo kitsonk/bayside-bricks
 
 ## 4. Worker and domain configuration
 
-`web/wrangler.jsonc` is the base config; at build time the adapter writes a
+`wrangler.jsonc` is the base config; at build time the adapter writes a
 resolved copy to `dist/server/wrangler.json`, and that is what every
 `wrangler dev` / `wrangler deploy` / CI job uses.
 
@@ -272,11 +272,11 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitsonkelly.deno.net/
 curl -sS https://bricks.kitsonkelly.deno.net/ | grep -o '<title>[^<]*</title>'
 ```
 
-Expect `200` and `<title>Bayside Brickstore</title>`. That host is the Fresh app
-at the repository root, still built by Deno's GitHub integration on every push to
-`main` — it is a different codebase from `web/`, so it is a working fallback, not
-a warm standby of the same build. If it is not `200`, §8.4 is a rebuild rather
-than a rollback: decide that consciously before proceeding.
+Expect `200` and `<title>Bayside Brickstore</title>`. That host is the retired
+Fresh app, still built by Deno's GitHub integration from the last commit that
+contained it — it is a different codebase from this app, so it is a working
+fallback, not a warm standby of the same build. If it is not `200`, §8.4 is a
+rebuild rather than a rollback: decide that consciously before proceeding.
 
 ### Step 3 — confirm the zone and its records
 
@@ -551,9 +551,10 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitsonkelly.deno.net/  
 curl -sS https://bricks.kitsonkelly.deno.net/ | grep -o '<title>[^<]*</title>'    # <title>Bayside Brickstore</title>
 ```
 
-That host is the Fresh app at the repository root, still built by Deno's GitHub
-integration on every push to `main` (`deploy/kitsonkelly/bricks`). It is a
-different codebase from `web/`, so what comes back is the pre-migration site.
+That host is the retired Fresh app, still built by Deno's GitHub
+integration from the last commit that contained it (`deploy/kitsonkelly/bricks`).
+It is a different codebase from this app, so what comes back is the
+pre-migration site.
 If it is not `200`, the legacy site is gone: this is a rebuild (R6), not a
 rollback, and the Worker is the only production you have.
 
@@ -590,7 +591,7 @@ Two traps:
   answers 404 regardless of the record. Re-add it in the Deno Deploy project
   (Settings → Domains) and retry.
 - **Do not re-enable `CI/CD` while the CNAME points at Deno.** `routes` in
-  `web/wrangler.jsonc` re-attaches the custom domain on the next production
+  `wrangler.jsonc` re-attaches the custom domain on the next production
   deploy, which takes the hostname back and conflicts with the CNAME. Either
   keep the workflow disabled, or land a hotfix branch that drops `routes` (and
   sets `workers_dev: true`) before re-enabling it.
@@ -634,7 +635,7 @@ delete, so prefer R1/R2 unless the script itself is unrecoverable.
 2. Record the live deployment id and version in the ticket.
 3. Decide: roll forward with a fix, or keep the rolled-back state. A `wrangler
    rollback` with the pipeline still enabled lasts only until the next push.
-4. Add a regression check to `web/scripts/smoke.mjs` if the failure was
+4. Add a regression check to `scripts/smoke.mjs` if the failure was
    user-visible; that suite is the only runtime gate.
 5. Re-enable anything disabled in R2/R4, and re-run the production job to prove
    it is green from a clean state.
@@ -656,8 +657,9 @@ delete, so prefer R1/R2 unless the script itself is unrecoverable.
   records — apex `A`, `www`, five MX, SPF, `bricks` — are re-verified with `dig`
   in §7 and need no credential.
 - **Deno Deploy is a fallback, not a mirror.** `bricks.kitsonkelly.deno.net`
-  serves the Fresh app at the repo root, kept current by Deno's own GitHub
-  integration. It is not the Astro build and does not track `web/`. It is also
+  serves the retired Fresh app from its last successful build. It is not the
+  Astro build and does not track this app; with the Fresh tree deleted from the
+  repository, Deno's integration can no longer rebuild it. It is also
   scheduled for deletion ([`decommission.md`](decommission.md)) — once the
   project is gone, R4 goes with it and R1/R6 are the whole rollback tree.
 - **Versions accumulate**: every PR push uploads a version and nothing prunes
