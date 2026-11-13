@@ -36,7 +36,7 @@ const env = {
   CI: "1",
   WRANGLER_SEND_METRICS: "false",
   // Never let a stray local .dev.vars / .env difference mask a missing binding:
-  // the app requires no secrets (web/README.md env matrix).
+  // the app requires no secrets (README.md env matrix).
   APP_ENV: process.env.APP_ENV ?? "development",
 };
 

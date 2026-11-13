@@ -1,10 +1,10 @@
 # Deploying Bayside Bricks (Cloudflare Workers)
 
 Operational reference for CI/CD, the domain cutover off Deno Deploy, and
-rollback. CI is [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml);
-deployment is [`.github/workflows/ci-cd.yml`](../../.github/workflows/ci-cd.yml).
+rollback. CI is [`.github/workflows/ci.yml`](../.github/workflows/ci.yml);
+deployment is [`.github/workflows/ci-cd.yml`](../.github/workflows/ci-cd.yml).
 The pair replaced the Deno Deploy `deployctl` workflow in the same change
-(MIGRATION_INVENTORY.md §11.1). Everything below runs from `web/`.
+(MIGRATION_INVENTORY.md §11.1). Everything below runs from the repository root.
 
 ## 0. Current status
 
@@ -14,8 +14,8 @@ The pair replaced the Deno Deploy `deployctl` workflow in the same change
 | Preview deployment | works: `wrangler versions upload` produces an immutable preview URL that passes the smoke suite, and the job asserts the live production deployment is byte-identical before and after. Requires **Preview URLs** enabled on the Worker — declared as `preview_urls: true` in `wrangler.jsonc` (§3) and re-asserted idempotently by the job if the flag is ever off |
 | Production deployment | works: `wrangler deploy` deploys the Worker, re-applies the custom domain, and the job smokes `https://bayside-bricks.me-6d3.workers.dev` (§3) |
 | Custom domain `bricks.kitandsimon.com` | **declared** in `wrangler.jsonc` (`routes` + `custom_domain`) and **attached** to Worker `bayside-bricks` (custom-domain id `775a47a8…`, cert `531f7afa…`); every production deploy re-applies it and verifies the binding. **Live** since 2026-11-13T04:22:26Z |
-| Deno Deploy | still live at `https://bricks.kitsonkelly.deno.net` — the Fresh app at the repo root, still built by Deno's own GitHub integration on every push to `main`. It no longer serves the public hostname. Rollback target: §5 and `docs/ci-cd.md` R4 — **only until the project is deleted**, which is scheduled: [`decommission.md`](../../docs/decommission.md) |
-| **INCIDENT (2026-11-13), resolved 04:15:46Z** | the registrar was still delegating to the old Cloudflare pair (`alice`/`bob`) while the zone lived on `danica`/`vicente`, so `kitandsimon.com` returned `SERVFAIL` and mail and web were down. GoDaddy was pointed at the assigned pair, the zone went `active`, and the Worker has served `bricks.kitandsimon.com` since 04:22:26Z. §2/§3 keep the reconstruction as history. **Operator procedure: [`docs/ci-cd.md`](../../docs/ci-cd.md).** |
+| Deno Deploy | still live at `https://bricks.kitsonkelly.deno.net` — the retired Fresh app, still built by Deno's own GitHub integration from the last commit that contained it (later pushes have no entrypoint and fail). It no longer serves the public hostname. Rollback target: §5 and `docs/ci-cd.md` R4 — **only until the project is deleted**, which is scheduled: [`decommission.md`](../docs/decommission.md) |
+| **INCIDENT (2026-11-13), resolved 04:15:46Z** | the registrar was still delegating to the old Cloudflare pair (`alice`/`bob`) while the zone lived on `danica`/`vicente`, so `kitandsimon.com` returned `SERVFAIL` and mail and web were down. GoDaddy was pointed at the assigned pair, the zone went `active`, and the Worker has served `bricks.kitandsimon.com` since 04:22:26Z. §2/§3 keep the reconstruction as history. **Operator procedure: [`docs/ci-cd.md`](../docs/ci-cd.md).** |
 
 The GitHub deploy jobs run only when `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID` exist as repository secrets (§2). Until they do, CI
@@ -25,7 +25,7 @@ stays green and the deploy jobs skip with a warning.
 
 | Stage | Trigger | What happens |
 | --- | --- | --- |
-| **Verify** (`ci.yml`) | every push, every PR | resolves Node from `web/.nvmrc` → `npm ci` → `npm run check` (`astro check`) → `npm run build` → `wrangler deploy --dry-run` (bundle validity) → `npm run images:check` (no hotlinked assets) → `npm test` (boots `wrangler dev` and runs the route-table smoke suite, `--images` included). On failure it uploads logs plus `dist/`. No secrets. |
+| **Verify** (`ci.yml`) | every push, every PR | resolves Node from `.nvmrc` → `npm ci` → `npm run check` (`astro check`) → `npm run build` → `wrangler deploy --dry-run` (bundle validity) → `npm run images:check` (no hotlinked assets) → `npm test` (boots `wrangler dev` and runs the route-table smoke suite, `--images` included). On failure it uploads logs plus `dist/`. No secrets. |
 | **Preview** | pull requests (same repo) | rebuilds the PR commit, `wrangler versions upload` tagged `pr-<n>`, asserts the live production deployment id/version are unchanged, runs the smoke suite against the preview URL, then creates or updates the sticky PR comment. Production traffic is untouched. |
 | **Production** | push to `main` (or manual dispatch) | rebuilds the commit, `wrangler deploy` (which also re-applies the `bricks.kitandsimon.com` custom domain from `wrangler.jsonc`), verifies the binding via the Cloudflare API, then runs the smoke suite against the workers.dev host it deployed to and against `PRODUCTION_URL` when that variable is set. |
 
@@ -94,8 +94,8 @@ an API token holding **Workers Scripts: Edit**. Old preview versions are inert
 (no traffic, no routes) but they do clutter the version list.
 
 The app has no unit tests (MIGRATION_INVENTORY.md §7), so the route-table smoke
-suite is the test gate: `web/scripts/smoke.mjs` (assertions) driven by
-`web/scripts/smoke-local.mjs` (spawns `wrangler dev`, waits for `/health`,
+suite is the test gate: `scripts/smoke.mjs` (assertions) driven by
+`scripts/smoke-local.mjs` (spawns `wrangler dev`, waits for `/health`,
 tears down). Run it locally with:
 
 ```bash
@@ -277,7 +277,7 @@ Everything on the Cloudflare side is already done:
 The nameserver change at the registrar was the only remaining action, and it is
 what ended the outage. Recorded here so a re-cutover after a rollback has the
 same steps (the full operator runbook, including rollback, is
-[`docs/ci-cd.md`](../../docs/ci-cd.md)):
+[`docs/ci-cd.md`](../docs/ci-cd.md)):
 
 GoDaddy → *My Products → kitandsimon.com → DNS → Nameservers → Change*, and
 replace the current pair with:
@@ -289,7 +289,7 @@ vicente.ns.cloudflare.com
 
 Or, with a GoDaddy API key/secret (`sso-key`) — the 1Password field holds the key
 and the secret on two lines, so use the exact block in
-[`docs/ci-cd.md`](../../docs/ci-cd.md) §6 step 5 rather than assembling the header
+[`docs/ci-cd.md`](../docs/ci-cd.md) §6 step 5 rather than assembling the header
 by hand:
 
 ```bash
@@ -313,7 +313,7 @@ dig +short MX kitandsimon.com @1.1.1.1         # -> the 5 Google MX hosts
 # 3. the Worker
 dig +short bricks.kitandsimon.com              # -> Cloudflare anycast
 curl -sSI https://bricks.kitandsimon.com/      # -> server: cloudflare, no x-fresh-uuid
-node web/scripts/smoke.mjs https://bricks.kitandsimon.com --images  # 21/21, 1 skip (Cloudflare's robots.txt)
+node scripts/smoke.mjs https://bricks.kitandsimon.com --images  # 21/21, 1 skip (Cloudflare's robots.txt)
 
 # 4. mail (manual): send to and from a @kitandsimon.com address
 ```
@@ -331,11 +331,11 @@ gh variable set PRODUCTION_URL --repo kitsonk/bayside-bricks \
 ```
 
 Post-cutover: the soak is done and signed off in
-[`verification-2026-11-13.md`](../../docs/verification-2026-11-13.md) — 63/63
+[`verification-2026-11-13.md`](../docs/verification-2026-11-13.md) — 63/63
 production checks, 21/21 route-table checks, five minutes of `wrangler tail`
 with zero exceptions, and pixel-identical rendering against the legacy host.
 Deno Deploy keeps its last good deployment only until the project is deleted
-([`decommission.md`](../../docs/decommission.md)); it is no longer addressable
+([`decommission.md`](../docs/decommission.md)); it is no longer addressable
 through `bricks.kitandsimon.com` because the custom domain routes to the Worker,
 so the rollback of record is "detach the custom domain and recreate the CNAME to
 `alias.deno.net`", not "wait for DNS" — and that option disappears with the

@@ -12,12 +12,16 @@ Run 2026-11-13 between 05:08Z and 05:19Z, against the deployment of `main`
 runbook), [`cutover-2026-11-13.md`](cutover-2026-11-13.md) (the cutover itself),
 [`decommission.md`](decommission.md) (what is left of Deno Deploy).
 
+Paths in this record use the current layout: the app was promoted from `web/` to
+the repository root later on 2026-11-13 (t_773ee38d). The commands were run as
+written from the then-current tree, and every path named here resolves today.
+
 ## 1. Method
 
 | Layer | How it was checked |
 | --- | --- |
-| Platform, DNS, TLS | `node web/scripts/verify-production.mjs` — resolves over DoH at 1.1.1.1, inspects the certificate over a real TLS handshake |
-| Route table, headers, assets | the same script (63 checks) plus `node web/scripts/smoke.mjs <url> --images` (22 cases) — the suite CI already runs |
+| Platform, DNS, TLS | `node scripts/verify-production.mjs` — resolves over DoH at 1.1.1.1, inspects the certificate over a real TLS handshake |
+| Route table, headers, assets | the same script (63 checks) plus `node scripts/smoke.mjs <url> --images` (22 cases) — the suite CI already runs |
 | Legacy parity | the same script with `--legacy https://bricks.kitsonkelly.deno.net`: visible text and CSS class sets of `/` and `/nonexistent` |
 | Layout | Chromium at 1440×900 and 390×844 against both hosts, screenshots diffed pixel by pixel |
 | User flow | the page loaded as an iframe child (script, images, message channel) in Chromium at mobile and desktop widths |
@@ -74,9 +78,9 @@ managed `robots.txt`). Same on `https://bayside-bricks.me-6d3.workers.dev`.
 
 | Asset | Check | Result |
 | --- | --- | --- |
-| `/vendor/iframeResizer…3.5.3.min.js` | served bytes vs `web/public/` | sha256 identical (`b40175f3…`), 13,466 B |
+| `/vendor/iframeResizer…3.5.3.min.js` | served bytes vs `public/` | sha256 identical (`b40175f3…`), 13,466 B |
 | same | vs the BrickLink CDN original | sha256 identical — the vendored copy is the byte-exact original, not a rebuild |
-| `/img/*.JPG` ×7 | served bytes vs `web/public/img/` | all 7 sha256 identical (1,013–32,015 B) |
+| `/img/*.JPG` ×7 | served bytes vs `public/img/` | all 7 sha256 identical (1,013–32,015 B) |
 | `/styles.css` | compiled CSS | serves at the legacy URL; differs from the legacy compile only by the dead-island utilities (Counter/Button), which no longer exist in the page |
 | `/favicon.ico`, `/logo.svg` | served | byte-identical to the legacy statics (checked during the port) |
 

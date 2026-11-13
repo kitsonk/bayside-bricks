@@ -1,15 +1,22 @@
 # dotenv environment variable files
 .env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
+.env.*
+!.env.example
+# Wrangler local dev secrets (never committed; .dev.vars.example is the template)
+.dev.vars
 
-# Fresh build directory
-_fresh/
 # npm dependencies
 node_modules/
-# Kanban worker worktrees created inside the repo (t_5f302b00 et al.)
-.worktrees/
-# Wrangler state when a wrangler command is run from the repo root
+
+# Astro build output and caches
+dist/
+.astro/
+
+# Wrangler state (.wrangler/deploy, .wrangler/dry-run, local .dev.vars state)
 .wrangler/
+
+# CI step logs (`.github/workflows/ci.yml` tees every step to ci-*.log)
+ci-*.log
+
+# Kanban worker worktrees created inside the repo
+.worktrees/
