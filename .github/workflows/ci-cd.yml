@@ -5,9 +5,18 @@ name: CI/CD
 # Cloudflare Workers (MIGRATION_INVENTORY.md §11.1).
 #
 # Pipeline
-#   verify    every push + PR: install -> typecheck -> build -> deploy dry run -> smoke test
-#   preview   PRs only:       upload an immutable Worker version, smoke its preview URL, comment on the PR
-#   production push to main:  deploy the smoke-tested build, then smoke the live domain
+#   CI        `.github/workflows/ci.yml`: install, typecheck, build, deploy dry
+#             run and route-table tests on every push and PR. No secrets.
+#   preview   PRs only:       upload an immutable Worker version, smoke its
+#                             preview URL, comment on the PR
+#   production push to main:  deploy the commit, then smoke the deployed Worker
+#
+# The deploy jobs rebuild from the same commit/lockfile that CI verified rather
+# than downloading CI's artefact: artefacts are not shared across workflow runs,
+# and a rebuild is required anyway to produce the adapter's `dist/server/
+# wrangler.json`. Merge-time gating therefore comes from requiring the `CI`
+# workflow (branch protection) — plus the post-deploy smoke below, which fails
+# the job if the deployed Worker is unhealthy.
 #
 # Required repository secrets (see web/docs/deploy.md):
 #   CLOUDFLARE_API_TOKEN    scoped Workers + zone token, nothing else
@@ -30,9 +39,6 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-env:
-  NODE_VERSION: "22"
 
 defaults:
   run:
@@ -69,48 +75,6 @@ jobs:
             echo "::warning::CLOUDFLARE_API_TOKEN and/or CLOUDFLARE_ACCOUNT_ID are not set — deploy jobs will be skipped. See web/docs/deploy.md."
           fi
 
-  verify:
-    name: Verify (typecheck, build, smoke)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run check
-
-      - name: Build
-        run: npm run build
-
-      # Catches bundling/config regressions before anything is uploaded: the
-      # adapter-generated dist/server/wrangler.json is what deploy uses.
-      - name: Validate deploy bundle
-        run: npx wrangler deploy --dry-run --outdir .wrangler/dry-run -c dist/server/wrangler.json
-
-      # Route-table smoke test against `wrangler dev` (the repo has no unit
-      # tests — MIGRATION_INVENTORY.md §7 — so the route table is the suite).
-      - name: Smoke test
-        run: npm test
-
-      - name: Upload build output
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-dist-${{ github.sha }}
-          path: web/dist
-          retention-days: 3
-          if-no-files-found: error
-
   preview:
     name: Preview deployment (PR)
     # Same-repo PRs only: fork PRs get no secrets, so they cannot deploy.
@@ -119,7 +83,7 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       needs.prerequisites.outputs.deploy == 'true'
-    needs: [prerequisites, verify]
+    needs: [prerequisites]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -132,21 +96,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node ${{ env.NODE_VERSION }}
+      - name: Set up Node (from web/.nvmrc)
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: web/.nvmrc
           cache: npm
           cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Restore build output
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist-${{ github.sha }}
-          path: web/dist
+      - name: Build
+        run: npm run build
 
       # An immutable version + preview URL: uploads without moving production
       # traffic. Production stays on the last `wrangler deploy` until merged.
@@ -187,7 +148,7 @@ jobs:
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') &&
       needs.prerequisites.outputs.deploy == 'true'
-    needs: [prerequisites, verify]
+    needs: [prerequisites]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -200,21 +161,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node ${{ env.NODE_VERSION }}
+      - name: Set up Node (from web/.nvmrc)
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: web/.nvmrc
           cache: npm
           cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Restore build output
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist-${{ github.sha }}
-          path: web/dist
+      - name: Build
+        run: npm run build
 
       - name: Deploy to Cloudflare Workers
         id: deploy

@@ -3,7 +3,8 @@
 > **Migration in progress.** The maintained target application scaffold lives
 > in [`web/`](web/) — Astro 7 (TypeScript) on Node.js 20+, deployed to
 > Cloudflare Workers via `@astrojs/cloudflare`. See [`web/README.md`](web/README.md)
-> for local commands and deployment assumptions. This root Deno Fresh app is
+> for local commands, CI (`../.github/workflows/ci.yml`) and deployment
+> assumptions. This root Deno Fresh app is
 > preserved temporarily as the porting reference and will be removed once the
 > port completes.
 

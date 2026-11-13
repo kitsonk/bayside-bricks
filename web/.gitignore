@@ -2,6 +2,8 @@ node_modules/
 dist/
 .astro/
 .wrangler/
+# CI step logs (`.github/workflows/ci.yml` tees every step to ci-*.log)
+ci-*.log
 .dev.vars
 .env
 .env.*

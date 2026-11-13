@@ -1,15 +1,16 @@
 # Deploying Bayside Bricks (Cloudflare Workers)
 
 Operational reference for CI/CD, the domain cutover off Deno Deploy, and
-rollback. The workflow is [`.github/workflows/ci-cd.yml`](../../.github/workflows/ci-cd.yml);
-it replaced the Deno Deploy `deployctl` workflow in the same change
+rollback. CI is [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml);
+deployment is [`.github/workflows/ci-cd.yml`](../../.github/workflows/ci-cd.yml).
+The pair replaced the Deno Deploy `deployctl` workflow in the same change
 (MIGRATION_INVENTORY.md §11.1). Everything below runs from `web/`.
 
 ## 0. Current status
 
 | Piece | State |
 | --- | --- |
-| CI (`verify`) | green on `main` — install → typecheck → build → deploy dry run → route-table smoke |
+| CI (`verify` in `ci.yml`) | green on `main` — install → typecheck → build → deploy dry run → asset check → route-table smoke |
 | Preview deployment | works: `wrangler versions upload` produces an immutable preview URL that passes the smoke suite |
 | Production deployment | works: `wrangler deploy` serves `https://bayside-bricks.me-6d3.workers.dev` (smoke green) |
 | Custom domain `bricks.kitandsimon.com` | **attached** to Worker `bayside-bricks` (custom-domain id `775a47a8…`, cert `531f7afa…`) — serves as soon as the zone is active |
@@ -24,9 +25,14 @@ stays green and the deploy jobs skip with a warning.
 
 | Stage | Trigger | What happens |
 | --- | --- | --- |
-| **Verify** | every push, every PR | `npm ci` → `npm run check` (`astro check`) → `npm run build` → `wrangler deploy --dry-run` (bundle validity) → `npm test` (boots `wrangler dev` and runs the route-table smoke suite) → uploads `web/dist` |
-| **Preview** | pull requests (same repo) | `wrangler versions upload` of the *same* build, tagged `pr-<n>`, then the smoke suite against the preview URL, then a PR comment with the URL. Production traffic is untouched. |
-| **Production** | push to `main` (or manual dispatch) | `wrangler deploy` of the same `web/dist` that passed Verify, then the smoke suite against `PRODUCTION_URL` (default `https://bricks.kitandsimon.com`). |
+| **Verify** (`ci.yml`) | every push, every PR | resolves Node from `web/.nvmrc` → `npm ci` → `npm run check` (`astro check`) → `npm run build` → `wrangler deploy --dry-run` (bundle validity) → `npm run images:check` (no hotlinked assets) → `npm test` (boots `wrangler dev` and runs the route-table smoke suite, `--images` included). On failure it uploads logs plus `dist/`. No secrets. |
+| **Preview** | pull requests (same repo) | rebuilds the PR commit, `wrangler versions upload` tagged `pr-<n>`, then the smoke suite against the preview URL, then a PR comment with the URL. Production traffic is untouched. |
+| **Production** | push to `main` (or manual dispatch) | rebuilds the commit, `wrangler deploy`, then the smoke suite against the workers.dev host it deployed to and against `PRODUCTION_URL` when that variable is set. |
+
+CI and the deploy jobs are separate workflows, so GitHub does not share
+artefacts between them and each deploy job rebuilds from the same commit and
+lockfile. Require the `CI` workflow in branch protection to gate merges; the
+post-deploy smoke is the runtime gate.
 
 The app has no unit tests (MIGRATION_INVENTORY.md §7), so the route-table smoke
 suite is the test gate: `web/scripts/smoke.mjs` (assertions) driven by
@@ -38,8 +44,8 @@ npm run build && npm test              # local wrangler dev on :8787 (SMOKE_PORT
 node scripts/smoke.mjs https://bricks.kitandsimon.com   # anywhere, no server needed
 ```
 
-`/img/*.JPG` assertions are off by default; `node scripts/smoke.mjs <url> --images`
-enables them once the seven BrickLink photos are self-hosted (t_e45969d3).
+`/img/*.JPG` assertions are off by default locally; `node scripts/smoke.mjs <url> --images`
+enables them, and CI always enables them (`SMOKE_ARGS=--images`).
 
 Cloudflare serves its own boilerplate `/robots.txt` on `*.workers.dev`, so that
 one assertion reports `SKIP` on workers.dev hosts and `PASS` (404) on the
