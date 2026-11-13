@@ -29,7 +29,7 @@ the legacy app — is complete (**t_773ee38d**).
 | Item | Evidence (2026-11-13) |
 | --- | --- |
 | Deno Deploy application `kitsonkelly/bricks` deleted | `curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitsonkelly.deno.net/` → `404` (it was `200` while the Fresh app was live) |
-| Deno's GitHub integration disconnected from `kitsonk/bayside-bricks` | no `deploy/kitsonkelly/bricks` status is created on the commits of the change that landed this document. The red `deploy/…` status still visible on older commits (`f705ff7` and before) is a build from 05:46:04Z, taken before the disconnection; those statuses are historical and will not be re-created |
+| Deno's GitHub integration disconnected from `kitsonk/bayside-bricks` | no `deploy/kitsonkelly/bricks` status is created on the commits of [PR #18](https://github.com/kitsonk/bayside-bricks/pull/18): `gh api repos/kitsonk/bayside-bricks/commits/<sha>/status` reports **0 statuses**, and the check runs are the four GitHub Actions jobs only. The previous Deno status appeared 14 seconds after its commit; none appeared on these commits after minutes. The red `deploy/…` statuses on older commits (`f705ff7` and before) are builds from before the disconnection and are historical |
 | The public host is still the Worker | `curl -sS -o /dev/null -w '%{http_code}\n' https://bricks.kitandsimon.com/` → `200` |
 | Rollback R4 retired in the repository | `docs/ci-cd.md` §8 no longer contains an R4 (the former R5/R6 are renumbered R4/R5), and `docs/deploy.md` §0/§5 no longer describe a Deno fallback |
 
