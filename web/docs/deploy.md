@@ -12,8 +12,9 @@ it replaced the Deno Deploy `deployctl` workflow in the same change
 | CI (`verify`) | green on `main` — install → typecheck → build → deploy dry run → route-table smoke |
 | Preview deployment | works: `wrangler versions upload` produces an immutable preview URL that passes the smoke suite |
 | Production deployment | works: `wrangler deploy` serves `https://bayside-bricks.me-6d3.workers.dev` (smoke green) |
-| Custom domain `bricks.kitandsimon.com` | **not attached yet** — blocked on zone ownership, see §3 |
-| Deno Deploy | untouched and still serving `bricks.kitandsimon.com`; it is the rollback |
+| Custom domain `bricks.kitandsimon.com` | **attached** to Worker `bayside-bricks` (custom-domain id `775a47a8…`, cert `531f7afa…`) — serves as soon as the zone is active |
+| Deno Deploy | untouched, last good deployment retained as rollback — but not currently reachable, because the domain itself does not resolve (below) |
+| **INCIDENT (2026-11-13)** | `kitandsimon.com` returns `SERVFAIL`: the registrar still delegates to the old Cloudflare pair while the zone lives on a new pair. Mail and web are down until the nameserver flip in §4. See §3. |
 
 The GitHub deploy jobs run only when `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID` exist as repository secrets (§2). Until they do, CI
@@ -97,108 +98,114 @@ gh secret set CLOUDFLARE_ACCOUNT_ID --repo kitsonk/bayside-bricks --body 6d3c3be
   zone exists in the account, which would hold CI red for the whole pre-cutover
   period. It is attached during the cutover (§4), once the zone exists.
 
-### The zone problem, verified 2026-11-09
+### The zone, as built (2026-11-13)
 
-`bricks.kitandsimon.com` is a `CNAME` → `alias.deno.net` (TTL 3600) in the
-`kitandsimon.com` zone, which lives at **GoDaddy** (`ns03/ns04.domaincontrol.com`)
-alongside Google Workspace mail (5 MX, SPF), Google site verifications and the
-`calendar`/`drive`/`groups`/`mail` Google delegations — 25 records in total.
-Workers custom domains require the hostname to be in a zone on the Cloudflare
-account; that account currently holds only `kitsonkelly.com`.
+`kitandsimon.com` is now a zone on the Cloudflare account:
 
-Delegating **just** the `bricks` subdomain to its own Cloudflare zone would be
-the minimal-blast-radius move: it needs NS records for `bricks` in the GoDaddy
-zone. **GoDaddy does not support that.** Verified against the live API:
+| | |
+| --- | --- |
+| Zone id | `21ae6e9bd7b4c714c1861b7b65df76ce` |
+| Assigned nameservers | `danica.ns.cloudflare.com`, `vicente.ns.cloudflare.com` |
+| Status | `pending` — `activation_failure_reason: ns_mismatch` |
+| Registrar | GoDaddy, still delegating to `alice.ns.cloudflare.com` / `bob.ns.cloudflare.com` |
 
-- `PUT /v1/domains/kitandsimon.com/records/NS/<name>` returns HTTP 200 but
-  stores nothing (`GET` reads back `[]`);
-- deleting that record type fails with
-  `INVALID_VALUE_ENUM: type not any of: A, AAAA, CAA, CNAME, HTTPS, MX, SRV, SVCB, TXT`.
+**This is the outage.** The registry delegation still points at the *old*
+Cloudflare nameserver pair (`alice`/`bob`), which no longer hosts the zone — it
+answers `REFUSED`, and recursive resolvers therefore return `SERVFAIL` for every
+name under `kitandsimon.com`, mail included. The previous GoDaddy-hosted zone
+(`ns03`/`ns04.domaincontrol.com`) was real until the domain was moved; the zone
+that was recreated in the account on 2026-11-13T01:17Z was assigned
+`danica`/`vicente`, and the registrar was never updated to match.
 
-So only two paths can serve the hostname from Workers:
+Zone contents — 12 records, rebuilt from the 2026-11-07 inventory plus passive
+DNS, because Cloudflare's import found nothing at the dead delegation:
 
-| Option | Blast radius | Rollback | Availability |
+| Name | Type | Value | Confidence |
 | --- | --- | --- | --- |
-| **A. Move `kitandsimon.com` to Cloudflare** — create the zone, confirm every record was imported, then point the registrar nameservers at Cloudflare. | Every record in the zone, including Google Workspace mail. Needs MX/SPF/verification records present in Cloudflare *before* the nameserver change, and Simon's sign-off (shared domain). | Set the GoDaddy nameservers back to `ns03/ns04.domaincontrol.com`; mail and web resume as the old zone reappears. | Always available |
-| **B. Cloudflare for SaaS custom hostname** — keep the zone at GoDaddy, add `bricks.kitandsimon.com` as a custom hostname on an existing Cloudflare zone, CNAME `bricks` at the SaaS fallback origin. | One CNAME plus one validation TXT. | Restore the `bricks` CNAME to `alias.deno.net`. | Needs the Custom Hostnames feature on the zone. The zone's DNS already carries what look like SaaS artefacts (`TXT ca3-…` at the apex, `TXT _cf-custom-hostname.www`, a `dcv.cloudflare.com` `_acme-challenge` CNAME), so it may already be provisioned — check `GET /zones/<id>/custom_hostnames` |
+| `@` | MX ×5 | `aspmx.l.google.com` (1), `alt1`/`alt2` (5), `alt3`/`alt4` (10) | exact — Google Workspace standard set |
+| `@` | TXT | `v=spf1 include:_spf.google.com ~all` | exact — recorded in the inventory |
+| `@` | A | `160.153.0.160` | exact — inventory + passive DNS (legacy GoDaddy WordPress blog) |
+| `www` | CNAME | `kitandsimon.com` | exact — inventory + passive DNS |
+| `mail`, `calendar`, `drive`, `groups` | CNAME ×4 | `ghs.googlehosted.com` | **reconstructed** — Google Workspace custom URLs; target not verified |
+| `bricks` | AAAA | `100::` (proxied, read-only) | created by the Workers custom-domain binding |
 
-Option B is preferable where it is available: it changes one record instead of
-the whole zone. Option A is the fallback and the only path that keeps the domain
-on a single provider.
+**Not recovered, re-add by hand if wanted:** the two `google-site-verification`
+TXT values (re-verify in Search Console), the `ca3-…` Cloudflare SaaS
+verification TXT, and any DKIM record (`google._domainkey`) that may have
+existed. None of these affect mail delivery; DKIM affects deliverability, so
+check Google Admin → Apps → Gmail → Authenticate email once DNS is back.
 
-The wrangler OAuth session on the build machine can deploy Workers and list
-zones, but it cannot create zones (`com.cloudflare.api.account.zone.create`
-denied) and cannot read zone DNS or custom hostnames (`Authentication error`).
-The cutover needs the scoped token from §2 in the environment.
+Delegating **just** the `bricks` subdomain was ruled out on 2026-11-09: GoDaddy
+has no NS record type (`PUT .../records/NS/<name>` returns 200 and stores
+nothing; delete returns `INVALID_VALUE_ENUM: type not any of: A, AAAA, CAA,
+CNAME, HTTPS, MX, SRV, SVCB, TXT`). The whole zone moves, or nothing does.
 
-## 4. Cutover (Deno Deploy → Cloudflare Workers)
 
-Preconditions: CI green on `main`, the production job verified against
-`https://bayside-bricks.me-6d3.workers.dev`, and the scoped token (§2) exported
-as `CLOUDFLARE_API_TOKEN` with `CLOUDFLARE_ACCOUNT_ID`. Deno Deploy stays
-deployed and untouched throughout — it is the rollback.
+## 4. Cutover — the registrar step (remaining)
 
-```bash
-# 0. Record the current state (rollback reference)
-dig +short bricks.kitandsimon.com          # -> alias.deno.net -> 69.67.170.170
-curl -sSI https://bricks.kitandsimon.com/  # -> server: deployd, x-fresh-uuid: ...
+Everything on the Cloudflare side is already done:
+
+- zone `kitandsimon.com` (`21ae6e9b…`) created, 12 records in place (§3);
+- Worker custom domain `bricks.kitandsimon.com` → service `bayside-bricks`
+  attached (id `775a47a8…`), which created the proxied `AAAA 100::` record and
+  a certificate request (`531f7afa…`).
+
+The **only** remaining action is the nameserver change at the registrar, and it
+is also what ends the outage:
+
+GoDaddy → *My Products → kitandsimon.com → DNS → Nameservers → Change*, and
+replace the current pair with:
+
+```
+danica.ns.cloudflare.com
+vicente.ns.cloudflare.com
 ```
 
-### Option B — custom hostname (preferred if available)
+Or, with a GoDaddy API key/secret (`sso-key`):
 
 ```bash
-# 1. Create the custom hostname on the Cloudflare zone that owns the SaaS setup
-#    POST /zones/<zone_id>/custom_hostnames
-#      {"hostname":"bricks.kitandsimon.com","ssl":{"method":"http","type":"dv"}}
-#    -> returns an ownership_verification TXT record
-# 2. Add that TXT at GoDaddy; wait for ssl.status == "active"
-# 3. Route the hostname to the Worker (Worker route on the SaaS zone, or the
-#    fallback origin the existing hostnames use)
-# 4. Flip one record at GoDaddy, TTL 600 for the first day:
-#    PUT /v1/domains/kitandsimon.com/records/CNAME/bricks
-#        [{"data":"<fallback origin>","ttl":600}]
+curl -X PATCH "https://api.godaddy.com/v1/domains/kitandsimon.com" \
+  -H "Authorization: sso-key <KEY>:<SECRET>" -H "Content-Type: application/json" \
+  -d '{"nameServers":["danica.ns.cloudflare.com","vicente.ns.cloudflare.com"]}'
 ```
 
-### Option A — move the zone
+Verify, in this order:
 
 ```bash
-# 1. Create the zone and capture the assigned nameservers
-#    POST /zones {"name":"kitandsimon.com","account":{"id":"<account>"},"type":"full"}
-# 2. Confirm Cloudflare imported EVERY record before touching the registrar:
-#    GET /zones/<zone_id>/dns_records
-#    expect the 25 listed in §3: 5x MX (Google), SPF TXT, 2x
-#    google-site-verification TXT, the empty TXT, A @, CNAME www/ftp/bricks/
-#    calendar/drive/groups/mail, and the ACME records. Recreate anything missing:
-#    mail breaks in the switch window if MX or SPF is absent.
-# 3. Change the registrar nameservers:
-#    PATCH /v1/domains/kitandsimon.com {"nameServers":["<ns1>","<ns2>"]}
-# 4. Wait for the zone to become Active: GET /zones/<zone_id> -> status "active"
-#    (usually minutes, up to 24h)
-```
+# 1. zone activates (minutes, occasionally up to 24h)
+curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/zones/21ae6e9bd7b4c714c1861b7b65df76ce" \
+  | jq -r '.result.status'                     # -> active
 
-### Then, either option — attach the custom domain and verify
+# 2. delegation and mail
+dig +short NS kitandsimon.com @1.1.1.1         # -> danica/vicente
+dig +short MX kitandsimon.com @1.1.1.1         # -> the 5 Google MX hosts
 
-```bash
-# 5. Attach the Worker custom domain (zone must exist and be active)
-#    PUT /accounts/<account>/workers/domains
-#      {"zone_id":"<zone_id>","hostname":"bricks.kitandsimon.com",
-#       "service":"bayside-bricks","environment":"production"}
-#    Universal SSL issues the certificate once the hostname resolves to Cloudflare.
-
-# 6. Verify
-dig +short bricks.kitandsimon.com           # -> Cloudflare anycast addresses
-curl -sSI https://bricks.kitandsimon.com/   # -> server: cloudflare, no x-fresh-uuid
+# 3. the Worker
+dig +short bricks.kitandsimon.com              # -> Cloudflare anycast
+curl -sSI https://bricks.kitandsimon.com/      # -> server: cloudflare, no x-fresh-uuid
 node web/scripts/smoke.mjs https://bricks.kitandsimon.com   # 15/15, no SKIPs
+
+# 4. mail (manual): send to and from a @kitandsimon.com address
 ```
 
-Cutover window: while the old CNAME's TTL (3600 s) drains, some resolvers keep
-serving the Deno Deploy site. That is expected and harmless — both sites serve
-the same content. Requests that resolve through the new path only start failing
-if the Worker/custom-domain step was skipped, so always attach the domain before
-flipping DNS.
+TLS is issued automatically once the hostname resolves to Cloudflare; if
+`curl` returns a certificate warning after activation, re-check in a few minutes
+before assuming a problem.
 
-Post-cutover: leave Deno Deploy running for the soak period tracked by
-`t_bc7cf085`, then delete the project and the `bricks` CNAME together.
+Then point the production job at the real domain, so every future deploy smokes
+it instead of the workers.dev host:
+
+```bash
+gh variable set PRODUCTION_URL --repo kitsonk/bayside-bricks \
+  --body https://bricks.kitandsimon.com
+```
+
+Post-cutover: Deno Deploy keeps its last good deployment for the soak tracked by
+`t_bc7cf085`; it is no longer addressable through `bricks.kitandsimon.com`
+because the custom domain now routes to the Worker, so record the rollback as
+"flip the nameservers back" (or detach the custom domain and recreate the CNAME
+to `alias.deno.net`), not as "wait for DNS".
 
 ## 5. Rollback
 
@@ -208,9 +215,9 @@ Ordered by severity; all are single commands and none require a rebuild.
 | --- | --- |
 | Bad Worker release, DNS already on Cloudflare | `npx wrangler rollback -c dist/server/wrangler.json` (previous version), or re-run the production job on the last good commit. Verify: `node scripts/smoke.mjs https://bricks.kitandsimon.com`. |
 | Bad Worker release, before DNS | `npx wrangler rollback -c dist/server/wrangler.json`, verify against the workers.dev host. |
-| Custom domain/TLS problem, option A | Put the registrar nameservers back: `PATCH /v1/domains/kitandsimon.com {"nameServers":["ns03.domaincontrol.com","ns04.domaincontrol.com"]}`. The GoDaddy zone was never deleted, so `bricks` resolves to Deno Deploy again as the old NS TTL expires. |
-| Custom domain/TLS problem, option B | Restore the single record: `PUT /v1/domains/kitandsimon.com/records/CNAME/bricks [{"data":"alias.deno.net","ttl":600}]`. Deno Deploy was never decommissioned, so the legacy site serves again as soon as resolvers converge. |
-| Zone-level change caused the incident | Roll back the nameservers (option A) or the CNAME (option B) as above; the Cloudflare zone can stay orphaned and be deleted later. |
+| Custom domain/TLS problem after activation | Detach the binding: `DELETE /accounts/6d3c3bec6c29c262b87b782e7a7b12de/workers/domains/775a47a88ca22a8dca76bbb4151c53d53ba62e8c`, then recreate `bricks` as a `CNAME` → `alias.deno.net` (Deno Deploy was never decommissioned). The legacy site serves again as resolvers converge. |
+| Whole-zone problem (mail or apex broken after activation) | Point the registrar back at GoDaddy: `PATCH /v1/domains/kitandsimon.com {"nameServers":["ns03.domaincontrol.com","ns04.domaincontrol.com"]}`. Only trustworthy if GoDaddy retained the original zone — **not verified** on 2026-11-13 (the delegation was already dead when this was written), so check `dig MX kitandsimon.com` straight after the flip. |
+| Zone-level change caused the incident | As above. Note the 2026-11-13 outage was exactly this: the zone moved before the registrar did, so nothing resolved. The Cloudflare zone can stay orphaned and be deleted later. |
 | CI itself is broken | Deploy manually: `cd web && npm ci && npm run build && npx wrangler deploy -c dist/server/wrangler.json` (needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` in the environment). |
 
 Rollback verification is the same smoke suite against the target URL — if it
