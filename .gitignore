@@ -9,3 +9,5 @@
 _fresh/
 # npm dependencies
 node_modules/
+# Kanban worker worktrees created inside the repo (t_5f302b00 et al.)
+.worktrees/
