@@ -13,7 +13,7 @@
     "build": "astro build",
     "preview": "wrangler dev -c dist/server/wrangler.json",
     "deploy": "astro build && wrangler deploy -c dist/server/wrangler.json",
-    "test": "node scripts/smoke-local.mjs",
+    "test": "exit 1",
     "smoke": "node scripts/smoke.mjs",
     "check": "astro check",
     "images:check": "node scripts/self-host-bricklink-images.mjs --check",
