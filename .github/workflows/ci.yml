@@ -89,7 +89,7 @@ jobs:
               const range = (pkg.engines && pkg.engines.node) || "";
               const major = range.match(/(\d+)/);
               process.stdout.write(major ? major[1] : "22");
-            ' package.json")"
+            ' "package.json")"
             NODE_SOURCE="package.json engines.node"
           fi
           NODE_VERSION="${NODE_VERSION#v}"
