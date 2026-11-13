@@ -18,7 +18,7 @@
 
 const DEFAULT_BASE = "http://127.0.0.1:8787";
 const NOT_FOUND_TITLE = "404 - Page not found";
-const HOME_TITLE = "Bayside Brickstore";
+const HOME_TITLE = "Bayside Brickstore PIPEFAIL-PROOF";
 const IMAGE_IDS = ["1035859", "1035787", "1035788", "1035789", "1035790", "1035791", "1035792"];
 
 const args = process.argv.slice(2);
