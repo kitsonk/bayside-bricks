@@ -231,8 +231,9 @@ Their state after this migration:
    `X-Frame-Options` or a `frame-ancestors` CSP** (Cloudflare Workers assets
    set neither by default — a future "security hardening" pass must not add
    them, or the storefront embed breaks silently).
-4. **Deno Deploy hosting + GitHub Actions `deployctl`** — replaced at cutover
-   (CI/CD and cutover card); nothing needed from this migration.
+4. **Deno Deploy hosting + GitHub Actions `deployctl`** — replaced at cutover by
+   the Worker and `wrangler`; the Deno project itself still exists but is
+   scheduled for deletion — see [`docs/decommission.md`](../docs/decommission.md).
 
 There are no webhooks, inbound APIs, OAuth, payments, mail, or queue/cron
 integrations (inventory §8/§9.4).
@@ -247,5 +248,5 @@ integrations (inventory §8/§9.4).
 | T4 | Vendored script is genuine iframe-resizer 3.5.3 contentWindow | File banner `v3.5.3 - 2016-02-23` + size/hash recorded | Executed (sha256 `b40175f3…`) |
 | T5 | Frame-embeddability: no `X-Frame-Options`/`frame-ancestors` on responses | `curl -sI` on `/` under `wrangler dev` | Executed (absent on `/`, `/styles.css`, 404) |
 | T6 | Rendered HTML references match `public/` paths exactly | Grep `src/` for `img/`, `vendor/`, `logo`, `favicon` refs; each maps to a real file | **Executed 2026-11-13:** the 7 `img` refs are `src="/img/<id>.JPG"` and each resolves 200 from `dist/client/img/`; `/` contains **zero** `bricklink.com/myImg` references; `/logo.svg` + `/vendor/…js` resolve, `/styles.css` 200 |
-| T7 | Bricklink storefront embed renders and auto-resizes | Manual: load the store page containing the iframe after cutover; verify render + resize | **Run at cutover/soak** (needs Bricklink store access — Simon) |
-| T8 | Visual parity of `/` and 404 vs the live Deno Deploy site | Manual side-by-side (layout, images, title strings) | **Run at verification stage** (QA card) |
+| T7 | Bricklink storefront embed renders and auto-resizes | Manual: load the store page containing the iframe after cutover; verify render + resize | **Executed 2026-11-13 (proxy check):** the production page loads as an iframe child with the vendored script armed, all images resolving, and no `X-Frame-Options`/`frame-ancestors` on any route. A look at the live BrickLink store page itself still needs store access (Simon) |
+| T8 | Visual parity of `/` and 404 vs the live Deno Deploy site | Manual side-by-side (layout, images, title strings) | **Executed 2026-11-13:** screenshots at 1440×900 and 390×844 are **pixel-identical** (0 differing pixels, equal document heights); visible text and class sets identical — [`docs/verification-2026-11-13.md`](../docs/verification-2026-11-13.md) §6 |
