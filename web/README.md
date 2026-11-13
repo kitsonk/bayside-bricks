@@ -137,8 +137,9 @@ The two workflows replaced the Deno Deploy `deployctl` workflow.
 - No session (KV) or image-service bindings are required; the adapter is
   configured with `session: false` and `imageService: "passthrough"` so the
   generated Worker declares no unused bindings.
-- Domain `bricks.kitandsimon.com` is expected to be routed to this Worker at
-  cutover; that routing is a deployment-time step outside this scaffold.
+- Domain `bricks.kitandsimon.com` is declared in `wrangler.jsonc` (`routes`
+  with `custom_domain: true`), so `wrangler deploy` attaches it; only the
+  registrar nameserver step of the cutover happens outside the repo.
 
 ## Scaffold layout
 
