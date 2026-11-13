@@ -14,6 +14,24 @@
   "observability": {
     "enabled": true
   },
+  // Production hostname, declared here so the binding is reproducible: a
+  // `wrangler deploy` of this config attaches bricks.kitandsimon.com to the
+  // `bayside-bricks` Worker (creating the proxied DNS record and certificate
+  // request) instead of relying on a one-off dashboard/API step. The adapter
+  // copies `routes` verbatim into dist/server/wrangler.json, which is the
+  // config CI deploys.
+  //
+  // Deploying this route does NOT require the zone to be active: a deploy
+  // against the still-pending kitandsimon.com zone succeeds and the hostname
+  // serves as soon as the registrar points at Cloudflare's nameservers.
+  // `workers_dev` stays enabled (default) — the workers.dev host is the
+  // pre-cutover production target and the rollback surface.
+  //
+  // Preview deployments are unaffected: `wrangler versions upload` ignores
+  // triggers and never moves production traffic or routes.
+  "routes": [
+    { "pattern": "bricks.kitandsimon.com", "custom_domain": true }
+  ],
   // Non-secret configuration goes here and is readable via env("NAME") at
   // runtime (or import.meta.env.NAME at build time):
   // "vars": {

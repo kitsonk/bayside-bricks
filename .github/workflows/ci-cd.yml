@@ -20,11 +20,22 @@ name: CI/CD
 #
 # Required repository secrets (see web/docs/deploy.md):
 #   CLOUDFLARE_API_TOKEN    scoped Workers + zone token, nothing else
+#                           (Workers Scripts: Edit + Workers Routes: Edit —
+#                           the production job attaches the custom domain
+#                           declared in web/wrangler.jsonc)
 #   CLOUDFLARE_ACCOUNT_ID   Cloudflare account id
-# Optional repository variable:
+# Optional repository variable (may live on the `Production` environment):
 #   PRODUCTION_URL          public URL to smoke after deploy. Unset until the
 #                           DNS cutover: the Worker is verified on its
 #                           workers.dev host, which the deploy step discovers.
+#
+# Production hostname: bricks.kitandsimon.com, declared as a `routes` entry
+# with `custom_domain: true` in web/wrangler.jsonc. The adapter copies it into
+# dist/server/wrangler.json, so `wrangler deploy` is the single source of truth
+# for the binding — no dashboard step. Deploying that route works while the
+# zone is still pending (it serves once the registrar points at Cloudflare).
+# `wrangler versions upload` (previews) ignores triggers entirely, so a PR
+# cannot move production traffic or rewrite the production route.
 
 on:
   push:
@@ -190,6 +201,50 @@ jobs:
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
+      # The deploy above applies the `routes` entry from web/wrangler.jsonc, so
+      # the custom-domain binding is reproducible rather than a one-off
+      # dashboard/API change. Verify it landed: `wrangler deploy` reports
+      # success for the script upload even if the hostname were not attached,
+      # and an unattached hostname only shows up as absent production traffic.
+      # Also report zone activation, so a deploy that cannot yet serve the
+      # domain looks pending rather than broken.
+      - name: Verify custom domain binding
+        id: domain
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DOMAIN: bricks.kitandsimon.com
+          WORKER: bayside-bricks
+          ZONE: kitandsimon.com
+        run: |
+          api=https://api.cloudflare.com/client/v4
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+
+          domains=$(curl -sS --retry 3 --retry-delay 2 -H "$auth" \
+            "$api/accounts/$CF_ACCOUNT_ID/workers/domains?per_page=50")
+          if [ "$(jq -r '.success // false' <<<"$domains")" != "true" ]; then
+            echo "::error::could not list Worker custom domains — the token needs Zone → Workers Routes: Edit and Workers Scripts: Edit (web/docs/deploy.md §2)"
+            jq -r '.errors[]?.message' <<<"$domains" || true
+            exit 1
+          fi
+          bound=$(jq -r --arg d "$DOMAIN" --arg w "$WORKER" \
+            '.result[] | select(.hostname == $d and .service == $w) | .hostname' <<<"$domains")
+          if [ "$bound" != "$DOMAIN" ]; then
+            echo "::error::$DOMAIN is not bound to Worker $WORKER. It is declared in web/wrangler.jsonc routes, so the deploy should have attached it — check the token's Workers Routes scope."
+            exit 1
+          fi
+          echo "::notice::$DOMAIN is bound to $WORKER."
+
+          # Advisory: the zone cannot serve until the registrar delegates to
+          # Cloudflare's nameservers (web/docs/deploy.md §4). A read failure is
+          # not a deploy failure.
+          zone=$(curl -sS --retry 3 --retry-delay 2 -H "$auth" \
+            "$api/zones?name=$ZONE" 2>/dev/null || echo '{}')
+          status=$(jq -r '.result[0].status // "unknown"' <<<"$zone" 2>/dev/null || echo unknown)
+          echo "zone=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" != "active" ]; then
+            echo "::warning::$ZONE zone status is '$status' (not active) — $DOMAIN will not resolve until the registrar points at Cloudflare's nameservers. The Worker is served on workers.dev in the meantime."
+          fi
+
       # Smoke the Worker on the host it was actually deployed to. The custom
       # domain is only smoke-tested once PRODUCTION_URL points at it (after the
       # DNS cutover, web/docs/deploy.md §4) — before that it still resolves to
@@ -207,16 +262,24 @@ jobs:
         env:
           WORKER_URL: ${{ steps.deploy.outputs.url }}
           PUBLIC_URL: ${{ vars.PRODUCTION_URL }}
+          DOMAIN: bricks.kitandsimon.com
+          ZONE_STATUS: ${{ steps.domain.outputs.zone }}
         run: |
           {
             echo "### Production deployment"
             echo
             echo "- Commit: \`${{ github.sha }}\`"
             echo "- Worker URL: $WORKER_URL"
+            echo "- Custom domain: $DOMAIN — bound to \`bayside-bricks\` (declared in \`web/wrangler.jsonc\`)"
+            echo "- Zone \`kitandsimon.com\`: $ZONE_STATUS"
+            if [ "$ZONE_STATUS" != "active" ]; then
+              echo
+              echo "  The binding exists but the hostname will not resolve until the registrar delegates to Cloudflare's nameservers (\`web/docs/deploy.md\` §4). Until then this deployment is served on the workers.dev URL above."
+            fi
             if [ -n "$PUBLIC_URL" ]; then
               echo "- Public URL: $PUBLIC_URL (smoke-tested)"
             else
-              echo "- Public URL: not set — custom domain not cut over yet (web/docs/deploy.md section 4)"
+              echo "- Public URL smoke: skipped — set the \`PRODUCTION_URL\` variable after the DNS cutover so every deploy smokes the real domain"
             fi
             echo "- Route-table smoke test: passed"
             echo
