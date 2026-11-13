@@ -13,7 +13,7 @@ The pair replaced the Deno Deploy `deployctl` workflow in the same change
 | CI (`verify` in `ci.yml`) | green on `main` — install → typecheck → build → deploy dry run → asset check → route-table smoke |
 | Preview deployment | works: `wrangler versions upload` produces an immutable preview URL that passes the smoke suite |
 | Production deployment | works: `wrangler deploy` serves `https://bayside-bricks.me-6d3.workers.dev` (smoke green) |
-| Custom domain `bricks.kitandsimon.com` | **attached** to Worker `bayside-bricks` (custom-domain id `775a47a8…`, cert `531f7afa…`) — serves as soon as the zone is active |
+| Custom domain `bricks.kitandsimon.com` | **declared** in `wrangler.jsonc` (`routes` + `custom_domain`) and **attached** to Worker `bayside-bricks` (custom-domain id `775a47a8…`, cert `531f7afa…`); every production deploy re-applies it and verifies the binding — serves as soon as the zone is active |
 | Deno Deploy | untouched, last good deployment retained as rollback — but not currently reachable, because the domain itself does not resolve (below) |
 | **INCIDENT (2026-11-13)** | `kitandsimon.com` returns `SERVFAIL`: the registrar still delegates to the old Cloudflare pair while the zone lives on a new pair. Mail and web are down until the nameserver flip in §4. See §3. |
 
@@ -27,7 +27,7 @@ stays green and the deploy jobs skip with a warning.
 | --- | --- | --- |
 | **Verify** (`ci.yml`) | every push, every PR | resolves Node from `web/.nvmrc` → `npm ci` → `npm run check` (`astro check`) → `npm run build` → `wrangler deploy --dry-run` (bundle validity) → `npm run images:check` (no hotlinked assets) → `npm test` (boots `wrangler dev` and runs the route-table smoke suite, `--images` included). On failure it uploads logs plus `dist/`. No secrets. |
 | **Preview** | pull requests (same repo) | rebuilds the PR commit, `wrangler versions upload` tagged `pr-<n>`, then the smoke suite against the preview URL, then a PR comment with the URL. Production traffic is untouched. |
-| **Production** | push to `main` (or manual dispatch) | rebuilds the commit, `wrangler deploy`, then the smoke suite against the workers.dev host it deployed to and against `PRODUCTION_URL` when that variable is set. |
+| **Production** | push to `main` (or manual dispatch) | rebuilds the commit, `wrangler deploy` (which also re-applies the `bricks.kitandsimon.com` custom domain from `wrangler.jsonc`), verifies the binding via the Cloudflare API, then runs the smoke suite against the workers.dev host it deployed to and against `PRODUCTION_URL` when that variable is set. |
 
 CI and the deploy jobs are separate workflows, so GitHub does not share
 artefacts between them and each deploy job rebuilds from the same commit and
@@ -99,10 +99,39 @@ gh secret set CLOUDFLARE_ACCOUNT_ID --repo kitsonk/bayside-bricks --body 6d3c3be
 - Worker name: `bayside-bricks` → `https://bayside-bricks.me-6d3.workers.dev`
   (workers.dev is kept enabled: it is the pre-DNS production target and the
   rollback surface for DNS work).
-- Custom domain: `bricks.kitandsimon.com`, deliberately **not** declared in
-  `wrangler.jsonc`. Declaring it there would make every deploy fail until the
-  zone exists in the account, which would hold CI red for the whole pre-cutover
-  period. It is attached during the cutover (§4), once the zone exists.
+- Custom domain: `bricks.kitandsimon.com`, declared in `wrangler.jsonc`:
+
+  ```jsonc
+  "routes": [
+    { "pattern": "bricks.kitandsimon.com", "custom_domain": true }
+  ]
+  ```
+
+  The `@astrojs/cloudflare` adapter copies `routes` verbatim into
+  `dist/server/wrangler.json`, so the config CI deploys is the config that
+  attaches the hostname. `wrangler deploy` creates the proxied DNS record and
+  the certificate request, then re-applies (and is idempotent about) the
+  binding on every deploy — no dashboard or one-off API step, and a rebuilt
+  Worker or a recreated account cannot silently lose the domain.
+
+  Two properties make this safe to keep in the repo:
+
+  - **A pending zone does not fail the deploy.** Verified 2026-11-13 by
+    deploying the same config to a throwaway Worker and hostname on the
+    pending `kitandsimon.com` zone: the deploy succeeded and the trigger was
+    attached. The hostname simply does not resolve until the registrar flips
+    nameservers (§4), so a config error can't hold production red during the
+    pre-cutover period.
+  - **Previews cannot touch it.** `wrangler versions upload` ignores triggers
+    and prints that routes/custom domains "must be applied with the command
+    `wrangler triggers deploy`". A PR gets an immutable preview URL and
+    nothing else.
+
+  The production job verifies the binding after each deploy with
+  `GET /accounts/{id}/workers/domains` (it fails the job if the hostname is
+  not bound to `bayside-bricks`, and reports the zone's activation status as
+  a warning). That check is what proves the declaration actually landed,
+  because `wrangler deploy` succeeds on the script upload regardless.
 
 ### The zone, as built (2026-11-13)
 
@@ -154,7 +183,9 @@ Everything on the Cloudflare side is already done:
 - zone `kitandsimon.com` (`21ae6e9b…`) created, 12 records in place (§3);
 - Worker custom domain `bricks.kitandsimon.com` → service `bayside-bricks`
   attached (id `775a47a8…`), which created the proxied `AAAA 100::` record and
-  a certificate request (`531f7afa…`).
+  a certificate request (`531f7afa…`). The binding was bootstrapped through the
+  API and is now owned by `wrangler.jsonc` `routes`: every production deploy
+  re-applies it and the post-deploy check fails the job if it is missing.
 
 The **only** remaining action is the nameserver change at the registrar, and it
 is also what ends the outage:
@@ -221,7 +252,7 @@ Ordered by severity; all are single commands and none require a rebuild.
 | --- | --- |
 | Bad Worker release, DNS already on Cloudflare | `npx wrangler rollback -c dist/server/wrangler.json` (previous version), or re-run the production job on the last good commit. Verify: `node scripts/smoke.mjs https://bricks.kitandsimon.com`. |
 | Bad Worker release, before DNS | `npx wrangler rollback -c dist/server/wrangler.json`, verify against the workers.dev host. |
-| Custom domain/TLS problem after activation | Detach the binding: `DELETE /accounts/6d3c3bec6c29c262b87b782e7a7b12de/workers/domains/775a47a88ca22a8dca76bbb4151c53d53ba62e8c`, then recreate `bricks` as a `CNAME` → `alias.deno.net` (Deno Deploy was never decommissioned). The legacy site serves again as resolvers converge. |
+| Custom domain/TLS problem after activation | Detach the binding: `DELETE /accounts/6d3c3bec6c29c262b87b782e7a7b12de/workers/domains/775a47a88ca22a8dca76bbb4151c53d53ba62e8c`, then recreate `bricks` as a `CNAME` → `alias.deno.net` (Deno Deploy was never decommissioned). The legacy site serves again as resolvers converge. **The route is declared in `wrangler.jsonc`**, so the next production deploy re-attaches the Worker — pause/disable the `CI/CD` production job (or set `"workers_dev": true` and drop the `routes` block on a hotfix branch) before detaching if the fallback must hold. |
 | Whole-zone problem (mail or apex broken after activation) | Point the registrar back at GoDaddy: `PATCH /v1/domains/kitandsimon.com {"nameServers":["ns03.domaincontrol.com","ns04.domaincontrol.com"]}`. Only trustworthy if GoDaddy retained the original zone — **not verified** on 2026-11-13 (the delegation was already dead when this was written), so check `dig MX kitandsimon.com` straight after the flip. |
 | Zone-level change caused the incident | As above. Note the 2026-11-13 outage was exactly this: the zone moved before the registrar did, so nothing resolved. The Cloudflare zone can stay orphaned and be deleted later. |
 | CI itself is broken | Deploy manually: `cd web && npm ci && npm run build && npx wrangler deploy -c dist/server/wrangler.json` (needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` in the environment). |
@@ -237,8 +268,9 @@ npm run check                       # astro check
 npm run build                       # -> dist/server (worker) + dist/client (statics)
 npx wrangler deploy --dry-run --outdir .wrangler/dry-run -c dist/server/wrangler.json
 npm test                            # wrangler dev + route-table smoke
-npx wrangler versions upload -c dist/server/wrangler.json --tag local   # preview URL
-npx wrangler deploy -c dist/server/wrangler.json                      # production
+npx wrangler versions upload -c dist/server/wrangler.json --tag local   # preview URL (triggers untouched)
+npx wrangler deploy -c dist/server/wrangler.json                      # production + applies the declared custom domain
+npx wrangler rollback -c dist/server/wrangler.json                    # previous version, binding untouched
 ```
 
 Never add `X-Frame-Options` or a CSP `frame-ancestors` directive: the page is
