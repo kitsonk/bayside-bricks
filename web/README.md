@@ -104,6 +104,19 @@ Node is resolved from `.nvmrc` first, then the lowest version satisfying
 `ci-failure-<sha>` artefact. Repro locally with `SMOKE_ARGS=--images npm test`
 (CI always enables the `/img/*.JPG` assertions).
 
+Two things make the red/green signal real, and both are load-bearing:
+
+- The workflow sets `defaults.run.shell: bash`. Every logging step pipes into
+  `tee`, and GitHub's default shell (`bash -e`) has no `pipefail`, so the
+  pipeline would exit with `tee`'s status — always 0.
+- `scripts/smoke-local.mjs` propagates the suite's exit code. It also exits as
+  soon as `wrangler dev` does, so `npm test` is green only when the assertions
+  are.
+
+Verified end to end: a deliberately broken assertion fails `npm test`, fails the
+`CI` run, and produces a `ci-failure-<sha>` artefact containing `ci-*.log` and
+`dist/`.
+
 ## Deployment assumptions
 
 Deployment (PR previews and production) is
