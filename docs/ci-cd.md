@@ -381,7 +381,7 @@ The run must be green, and its summary must show a smoke of
 | Check | Command | Expected |
 | --- | --- | --- |
 | Delegation | `dig +short NS kitandsimon.com @1.1.1.1` | `danica`/`vicente`, no others |
-| Apex resolves | `dig +short A kitandsimon.com @1.1.1.1` | two Cloudflare anycast addresses |
+| Apex resolves | `dig +short A kitandsimon.com @1.1.1.1` | the GoDaddy origin (`160.153.0.160`) — the apex is a DNS-only record and was **not** part of the cutover |
 | `bricks` resolves | `dig +short bricks.kitandsimon.com @1.1.1.1` | two Cloudflare anycast addresses |
 | Mail records survive | `dig +short MX kitandsimon.com @1.1.1.1` | the five Google Workspace hosts |
 | TLS certificate | `echo \| openssl s_client -connect bricks.kitandsimon.com:443 -servername bricks.kitandsimon.com 2>/dev/null \| openssl x509 -noout -subject -dates` | `CN=kitandsimon.com` (or a SAN covering it), not expired |
@@ -670,5 +670,6 @@ delete, so prefer R1/R2 unless the script itself is unrecoverable.
 
 | Date | Change |
 | --- | --- |
+| 2026-11-13 | Cutover completed and verified: `PRODUCTION_URL` set (`04:47Z`); first run with it set exposed the edge-dependent `robots.txt` rendering, fixed so any 2xx on that path is a SKIP; apex expectation in §7 corrected (DNS-only to the GoDaddy origin). Evidence: [`cutover-2026-11-13.md`](cutover-2026-11-13.md) |
 | 2026-11-13 | Runbook written; zone activated and cutover executed (`04:15:46Z`); smoke suite corrected to report Cloudflare's managed `robots.txt` as SKIP on the custom domain as well as workers.dev |
 | 2026-11-13 | Re-verified against live state and corrected: the Deno fallback is `bricks.kitsonkelly.deno.net` (live), not `bayside-bricks.deno.dev`; the GoDaddy `sso-key` credential is a two-line field, so the scripted NS flip now splits it; `PRODUCTION_URL` confirmed unset; added the resolver workaround (§7.1) |
