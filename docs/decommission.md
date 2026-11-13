@@ -10,7 +10,10 @@ last step needs a person*).
 
 Recorded 2026-11-13 during the verification card (t_bc7cf085); evidence in
 [`verification-2026-11-13.md`](verification-2026-11-13.md) and
-[`cutover-2026-11-13.md`](cutover-2026-11-13.md).
+[`cutover-2026-11-13.md`](cutover-2026-11-13.md). The remaining console step is
+tracked on the board as **t_dc0f01cb**; the repo restructure that follows it
+(the `web/` → root promotion and retirement of the legacy Fresh tree) is
+**t_773ee38d**.
 
 ## 1. Done
 
@@ -28,8 +31,8 @@ Recorded 2026-11-13 during the verification card (t_bc7cf085); evidence in
 | Item | Owner | How |
 | --- | --- | --- |
 | Delete the Deno Deploy application `bayside-bricks` | Kit | Deno console → app → delete (steps below) |
-| Disconnect Deno's GitHub integration from `kitsonk/bayside-bricks` | Kit | GitHub → Settings → Applications → deno deploy → Configure → remove this repository |
-| After deletion: retire rollback R4 and the fallback paragraphs | next repo change | `docs/ci-cd.md` §8 R4 and `web/docs/deploy.md` §0/§5 currently treat Deno Deploy as a rollback target |
+| Disconnect Deno's GitHub integration from `kitsonk/bayside-bricks` | Kit | GitHub → Settings → Applications → deno deploy → Configure → remove this repository. **Confirmed still connected** on 2026-11-13: PR #14 carried a `deploy/kitsonkelly/bricks` check, which reported *Build succeeded*, so Deno is still building this repository on every push. |
+| After deletion: retire rollback R4 and the fallback paragraphs | next repo change | `docs/ci-cd.md` §8 R4 and `web/docs/deploy.md` §0/§5 currently treat Deno Deploy as a rollback target. Tracked as t_dc0f01cb. |
 
 Until the deletion happens, **R4 (repoint `bricks` at Deno Deploy) is still
 valid** — the project, its last deployment and its GitHub integration are
