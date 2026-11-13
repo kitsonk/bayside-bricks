@@ -13,9 +13,9 @@ The pair replaced the Deno Deploy `deployctl` workflow in the same change
 | CI (`verify` in `ci.yml`) | green on `main` — install → typecheck → build → deploy dry run → asset check → route-table smoke |
 | Preview deployment | works: `wrangler versions upload` produces an immutable preview URL that passes the smoke suite, and the job asserts the live production deployment is byte-identical before and after. Requires **Preview URLs** enabled on the Worker — declared as `preview_urls: true` in `wrangler.jsonc` (§3) and re-asserted idempotently by the job if the flag is ever off |
 | Production deployment | works: `wrangler deploy` deploys the Worker, re-applies the custom domain, and the job smokes `https://bayside-bricks.me-6d3.workers.dev` (§3) |
-| Custom domain `bricks.kitandsimon.com` | **declared** in `wrangler.jsonc` (`routes` + `custom_domain`) and **attached** to Worker `bayside-bricks` (custom-domain id `775a47a8…`, cert `531f7afa…`); every production deploy re-applies it and verifies the binding — serves as soon as the zone is active |
-| Deno Deploy | untouched, last good deployment retained as rollback — but not currently reachable, because the domain itself does not resolve (below) |
-| **INCIDENT (2026-11-13)** | `kitandsimon.com` returns `SERVFAIL`: the registrar still delegates to the old Cloudflare pair while the zone lives on a new pair. Mail and web are down until the nameserver flip in §4. See §3. |
+| Custom domain `bricks.kitandsimon.com` | **declared** in `wrangler.jsonc` (`routes` + `custom_domain`) and **attached** to Worker `bayside-bricks` (custom-domain id `775a47a8…`, cert `531f7afa…`); every production deploy re-applies it and verifies the binding. **Live** since 2026-11-13T04:22:26Z |
+| Deno Deploy | live at `https://bricks.kitsonkelly.deno.net` — the Fresh app at the repo root, still built by Deno's own GitHub integration on every push to `main`. It no longer serves the public hostname. Rollback target: §5 and `docs/ci-cd.md` R4 |
+| **INCIDENT (2026-11-13), resolved 04:15:46Z** | the registrar was still delegating to the old Cloudflare pair (`alice`/`bob`) while the zone lived on `danica`/`vicente`, so `kitandsimon.com` returned `SERVFAIL` and mail and web were down. GoDaddy was pointed at the assigned pair, the zone went `active`, and the Worker has served `bricks.kitandsimon.com` since 04:22:26Z. §2/§3 keep the reconstruction as history. **Operator procedure: [`docs/ci-cd.md`](../../docs/ci-cd.md).** |
 
 The GitHub deploy jobs run only when `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID` exist as repository secrets (§2). Until they do, CI
@@ -226,10 +226,12 @@ disabling workers.dev is a deliberate follow-up (drop both keys, smoke
 | --- | --- |
 | Zone id | `21ae6e9bd7b4c714c1861b7b65df76ce` |
 | Assigned nameservers | `danica.ns.cloudflare.com`, `vicente.ns.cloudflare.com` |
-| Status | `pending` — `activation_failure_reason: ns_mismatch` |
-| Registrar | GoDaddy, still delegating to `alice.ns.cloudflare.com` / `bob.ns.cloudflare.com` |
+| Status | `active` since 2026-11-13T04:15:46Z |
+| Registrar | GoDaddy, delegating to `danica.ns.cloudflare.com` / `vicente.ns.cloudflare.com` |
 
-**This is the outage.** The registry delegation still points at the *old*
+**This was the outage** (resolved 2026-11-13T04:15:46Z — kept because the
+reconstruction below explains why the zone has no imported history). The registry
+delegation then still pointed at the *old*
 Cloudflare nameserver pair (`alice`/`bob`), which no longer hosts the zone — it
 answers `REFUSED`, and recursive resolvers therefore return `SERVFAIL` for every
 name under `kitandsimon.com`, mail included. The previous GoDaddy-hosted zone
@@ -261,7 +263,7 @@ nothing; delete returns `INVALID_VALUE_ENUM: type not any of: A, AAAA, CAA,
 CNAME, HTTPS, MX, SRV, SVCB, TXT`). The whole zone moves, or nothing does.
 
 
-## 4. Cutover — the registrar step (remaining)
+## 4. Cutover — the registrar step (executed 2026-11-13T04:15:46Z)
 
 Everything on the Cloudflare side is already done:
 
@@ -272,8 +274,10 @@ Everything on the Cloudflare side is already done:
   API and is now owned by `wrangler.jsonc` `routes`: every production deploy
   re-applies it and the post-deploy check fails the job if it is missing.
 
-The **only** remaining action is the nameserver change at the registrar, and it
-is also what ends the outage:
+The nameserver change at the registrar was the only remaining action, and it is
+what ended the outage. Recorded here so a re-cutover after a rollback has the
+same steps (the full operator runbook, including rollback, is
+[`docs/ci-cd.md`](../../docs/ci-cd.md)):
 
 GoDaddy → *My Products → kitandsimon.com → DNS → Nameservers → Change*, and
 replace the current pair with:
@@ -283,7 +287,10 @@ danica.ns.cloudflare.com
 vicente.ns.cloudflare.com
 ```
 
-Or, with a GoDaddy API key/secret (`sso-key`):
+Or, with a GoDaddy API key/secret (`sso-key`) — the 1Password field holds the key
+and the secret on two lines, so use the exact block in
+[`docs/ci-cd.md`](../../docs/ci-cd.md) §6 step 5 rather than assembling the header
+by hand:
 
 ```bash
 curl -X PATCH "https://api.godaddy.com/v1/domains/kitandsimon.com" \
@@ -306,7 +313,7 @@ dig +short MX kitandsimon.com @1.1.1.1         # -> the 5 Google MX hosts
 # 3. the Worker
 dig +short bricks.kitandsimon.com              # -> Cloudflare anycast
 curl -sSI https://bricks.kitandsimon.com/      # -> server: cloudflare, no x-fresh-uuid
-node web/scripts/smoke.mjs https://bricks.kitandsimon.com   # 15/15, no SKIPs
+node web/scripts/smoke.mjs https://bricks.kitandsimon.com --images  # 21/21, 1 skip (Cloudflare's robots.txt)
 
 # 4. mail (manual): send to and from a @kitandsimon.com address
 ```
