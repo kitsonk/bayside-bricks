@@ -657,7 +657,9 @@ delete, so prefer R1/R2 unless the script itself is unrecoverable.
   in §7 and need no credential.
 - **Deno Deploy is a fallback, not a mirror.** `bricks.kitsonkelly.deno.net`
   serves the Fresh app at the repo root, kept current by Deno's own GitHub
-  integration. It is not the Astro build and does not track `web/`.
+  integration. It is not the Astro build and does not track `web/`. It is also
+  scheduled for deletion ([`decommission.md`](decommission.md)) — once the
+  project is gone, R4 goes with it and R1/R6 are the whole rollback tree.
 - **Versions accumulate**: every PR push uploads a version and nothing prunes
   them (`wrangler` has no `versions delete`). Old versions are inert; delete them
   in the dashboard or with a Workers Scripts: Edit token if the list gets noisy.
@@ -670,6 +672,7 @@ delete, so prefer R1/R2 unless the script itself is unrecoverable.
 
 | Date | Change |
 | --- | --- |
+| 2026-11-13 | Production verification passed: 63/63 checks on `bricks.kitandsimon.com` (routes, assets, SEO contract, frame contract, asset sha256, legacy text/class parity), 21/21 smoke, pixel-identical rendering, and a five-minute `wrangler tail` soak with zero exceptions. Evidence: [`verification-2026-11-13.md`](verification-2026-11-13.md); Deno Deploy deletion scheduled in [`decommission.md`](decommission.md) |
 | 2026-11-13 | Cutover completed and verified: `PRODUCTION_URL` set (`04:47Z`); first run with it set exposed the edge-dependent `robots.txt` rendering, fixed so any 2xx on that path is a SKIP; apex expectation in §7 corrected (DNS-only to the GoDaddy origin). Evidence: [`cutover-2026-11-13.md`](cutover-2026-11-13.md) |
 | 2026-11-13 | Runbook written; zone activated and cutover executed (`04:15:46Z`); smoke suite corrected to report Cloudflare's managed `robots.txt` as SKIP on the custom domain as well as workers.dev |
 | 2026-11-13 | Re-verified against live state and corrected: the Deno fallback is `bricks.kitsonkelly.deno.net` (live), not `bayside-bricks.deno.dev`; the GoDaddy `sso-key` credential is a two-line field, so the scripted NS flip now splits it; `PRODUCTION_URL` confirmed unset; added the resolver workaround (§7.1) |

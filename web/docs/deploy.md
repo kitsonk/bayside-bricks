@@ -14,7 +14,7 @@ The pair replaced the Deno Deploy `deployctl` workflow in the same change
 | Preview deployment | works: `wrangler versions upload` produces an immutable preview URL that passes the smoke suite, and the job asserts the live production deployment is byte-identical before and after. Requires **Preview URLs** enabled on the Worker — declared as `preview_urls: true` in `wrangler.jsonc` (§3) and re-asserted idempotently by the job if the flag is ever off |
 | Production deployment | works: `wrangler deploy` deploys the Worker, re-applies the custom domain, and the job smokes `https://bayside-bricks.me-6d3.workers.dev` (§3) |
 | Custom domain `bricks.kitandsimon.com` | **declared** in `wrangler.jsonc` (`routes` + `custom_domain`) and **attached** to Worker `bayside-bricks` (custom-domain id `775a47a8…`, cert `531f7afa…`); every production deploy re-applies it and verifies the binding. **Live** since 2026-11-13T04:22:26Z |
-| Deno Deploy | live at `https://bricks.kitsonkelly.deno.net` — the Fresh app at the repo root, still built by Deno's own GitHub integration on every push to `main`. It no longer serves the public hostname. Rollback target: §5 and `docs/ci-cd.md` R4 |
+| Deno Deploy | still live at `https://bricks.kitsonkelly.deno.net` — the Fresh app at the repo root, still built by Deno's own GitHub integration on every push to `main`. It no longer serves the public hostname. Rollback target: §5 and `docs/ci-cd.md` R4 — **only until the project is deleted**, which is scheduled: [`decommission.md`](../../docs/decommission.md) |
 | **INCIDENT (2026-11-13), resolved 04:15:46Z** | the registrar was still delegating to the old Cloudflare pair (`alice`/`bob`) while the zone lived on `danica`/`vicente`, so `kitandsimon.com` returned `SERVFAIL` and mail and web were down. GoDaddy was pointed at the assigned pair, the zone went `active`, and the Worker has served `bricks.kitandsimon.com` since 04:22:26Z. §2/§3 keep the reconstruction as history. **Operator procedure: [`docs/ci-cd.md`](../../docs/ci-cd.md).** |
 
 The GitHub deploy jobs run only when `CLOUDFLARE_API_TOKEN` and
@@ -330,11 +330,16 @@ gh variable set PRODUCTION_URL --repo kitsonk/bayside-bricks \
   --body https://bricks.kitandsimon.com
 ```
 
-Post-cutover: Deno Deploy keeps its last good deployment for the soak tracked by
-`t_bc7cf085`; it is no longer addressable through `bricks.kitandsimon.com`
-because the custom domain now routes to the Worker, so record the rollback as
-"flip the nameservers back" (or detach the custom domain and recreate the CNAME
-to `alias.deno.net`), not as "wait for DNS".
+Post-cutover: the soak is done and signed off in
+[`verification-2026-11-13.md`](../../docs/verification-2026-11-13.md) — 63/63
+production checks, 21/21 route-table checks, five minutes of `wrangler tail`
+with zero exceptions, and pixel-identical rendering against the legacy host.
+Deno Deploy keeps its last good deployment only until the project is deleted
+([`decommission.md`](../../docs/decommission.md)); it is no longer addressable
+through `bricks.kitandsimon.com` because the custom domain routes to the Worker,
+so the rollback of record is "detach the custom domain and recreate the CNAME to
+`alias.deno.net`", not "wait for DNS" — and that option disappears with the
+project.
 
 ## 5. Rollback
 

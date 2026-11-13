@@ -15,6 +15,7 @@
     "deploy": "astro build && wrangler deploy -c dist/server/wrangler.json",
     "test": "node scripts/smoke-local.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "verify:prod": "node scripts/verify-production.mjs",
     "check": "astro check",
     "images:check": "node scripts/self-host-bricklink-images.mjs --check",
     "images:fetch": "node scripts/self-host-bricklink-images.mjs",
