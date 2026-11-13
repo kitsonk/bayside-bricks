@@ -153,11 +153,11 @@ gh variable set PRODUCTION_URL --repo kitsonk/bayside-bricks \
   --body https://bricks.kitandsimon.com
 ```
 
-Unset as of 2026-11-13 (verified with `gh variable list`), the post-deploy smoke
-only proves the workers.dev host, which is the same build but not the public
-hostname. Set it as the last step of a cutover (§6, step 8) — not before, or a
-deploy during the flip proves the wrong site. This is the one cutover step still
-outstanding.
+Set on 2026-11-13 at `04:47Z`, once the zone was active and the Worker had been
+serving the custom domain since `04:22Z`. Before that the post-deploy smoke only
+proved the workers.dev host, which is the same build but not the public hostname.
+Set it as the last step of a cutover (§6, step 8) — not before, or a deploy
+during the flip proves the wrong site. Nothing about the cutover is outstanding.
 
 ### 3.5 Kill switch
 
@@ -241,11 +241,11 @@ The nameserver flip at the registrar is the only step that changes where
 declared in `wrangler.jsonc`, so there is no dashboard work and nothing to hand
 edit — the point of the design is that the binding cannot drift.
 
-**Current state (2026-11-13): already executed.** The zone activated at
-`04:15:46Z` (GoDaddy moved from `alice`/`bob` to `danica`/`vicente`) and
-production has been served by the Worker since the `04:22:26Z` deployment. Step 8
-(`PRODUCTION_URL`) was not done and is the one outstanding item. Keep this
-section for a re-cutover after a rollback, or to verify what was done.
+**Current state (2026-11-13): complete.** The zone activated at `04:15:46Z`
+(GoDaddy moved from `alice`/`bob` to `danica`/`vicente`), production has been
+served by the Worker since the `04:22:26Z` deployment, and step 8
+(`PRODUCTION_URL`) was set at `04:47Z`. Keep this section for a re-cutover after
+a rollback, or to verify what was done.
 
 ### Step 0 — freeze and announce
 
@@ -432,11 +432,14 @@ the legacy Fresh app sets `x-fresh-uuid` on every response, the Worker never doe
 ### 7.2 Notes that will otherwise waste an hour
 
 - **The robots.txt check reports SKIP, not PASS.** Cloudflare serves its managed
-  `robots.txt` (content-signal directives) on every host it fronts — workers.dev
-  *and* the proxied custom domain — before the request reaches the Worker. The
-  suite therefore reports 1 skip on both hosts; the app-served 404 assertion
-  still applies everywhere Cloudflare does not inject one. A `FAIL` there means
-  the body is not Cloudflare's, which is a real regression.
+  `robots.txt` on every host it fronts — workers.dev *and* the proxied custom
+  domain — before the request reaches the Worker, so the suite reports 1 skip on
+  both hosts. The body it renders is not stable across edges: the 1248-byte
+  content-signal document in one colo, an empty 200 in another (a GitHub runner
+  got the empty one on 2026-11-13 while this machine got the document from the
+  same zone). The suite therefore skips **any** 2xx on that path and prints the
+  status, byte count and which shape it saw. Only a non-2xx there — a challenge
+  or a 5xx — is a failure, and that is a real platform problem, not the app.
 - **Counts.** Without `--images` the suite is 15 cases: `14/14 checks passed,
   1 skipped`. With `--images` it is 22: `21/21 checks passed, 1 skipped`.
 

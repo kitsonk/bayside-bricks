@@ -108,11 +108,19 @@ for (const c of cases) {
     }
     if (ok) detail = `${res.status} ${type || "(no content-type)"}`.trim();
     // Cloudflare's managed robots.txt is platform behaviour, not app behaviour:
-    // it is injected on workers.dev and on the proxied custom domain alike.
-    if (!ok && c.url === "/robots.txt" && /content-signal/i.test(body)) {
+    // it is injected on workers.dev and on the proxied custom domain alike, and
+    // the body it renders varies by edge — the 1248-byte content-signal document
+    // in one colo, an empty 200 in another (seen from a GitHub runner
+    // 2026-11-13, on the same zone that served the document elsewhere). Neither
+    // is the app, so any 2xx there is a SKIP; a non-2xx (challenge, 5xx) stays a
+    // failure.
+    if (!ok && c.url === "/robots.txt" && res.status >= 200 && res.status < 300) {
       ok = true;
       skipped = true;
-      detail = `SKIP: served by Cloudflare's managed robots.txt (content-signal, ${body.length} bytes) before the Worker — asserts 404 where Cloudflare does not inject one`;
+      const shape = /content-signal/i.test(body)
+        ? "content-signal document"
+        : "empty/no content-signal body";
+      detail = `SKIP: served by Cloudflare's managed robots.txt before the Worker (${res.status}, ${body.length} bytes, ${shape}) — asserts 404 where Cloudflare does not inject one`;
     }
   } catch (err) {
     ok = false;
